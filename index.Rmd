@@ -1,0 +1,2736 @@
+---
+params:
+  data_file_provider: "output_files/RTTI_provider.csv"
+  data_file_national: "output_files/RTTI_national.csv"
+  data_file_region: "output_files/RTTI_region.csv"
+  year_month: "2025-03-01"
+title: "RTTI Monthly data report - March 2025"
+author: "Sonia Mazzi"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+theme: cosmos
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, cache = FALSE, warning=FALSE)
+options(knitr.kable.NA = '')
+
+```
+
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(readr)
+library(stringr)
+library(ggiraph)#for interactive plots
+library(lubridate)
+library(kableExtra)
+library(highcharter)
+library(DT)
+library(gridExtra)
+```
+
+```{r}
+year_data <- year(params$year_month)
+month_data <- month.name[month(params$year_month)]
+
+month_year_data <- paste0(month_data, ", ", year_data)
+```
+
+
+# Introduction
+
+In this report, some summaries of Referral to Treatment Time (RTT) are presented. The summaries are based on the Referral to Treatment Time Index (RTTI).
+
+Please, refer to the documentation of RTTI for definitions, examples and other details.
+
+This report is based on RTT data from the NHS website, which includes data up to `r month_year_data`.
+
+\
+
+# Fixed time summaries 
+
+This section presents summaries of waiting times on `r month_year_data`.
+
+## The distribution of RTTI  on `r month_year_data`.
+
+The boxplot below shows the boxplots of RTTI for all medical specialties (or treatment functions) in `r month_year_data`.
+
+
+
+```{r}
+#data for boxplot
+gs_df2 <- read_csv(params$data_file_provider) %>% 
+  mutate(Provider = str_to_title(Provider)) %>%
+  mutate(Provider = str_replace(Provider, "Nhs", "NHS")) %>%
+  mutate(Provider = str_replace(Provider, "NHS Foundation Trust", "")) %>%
+  mutate(Provider = str_replace(Provider, "NHS Trust", "")) %>%
+  filter(Date == params$year_month, `RTT Part Description` == "Incomplete DTA", `Treatment Function Name` != "Total", NHS=="TRUE") %>%
+  mutate(NHS = ifelse(NHS=="TRUE", "NHS", "IH")) %>%
+  mutate(RTTI_rounded = round(RTTI, 2)) %>%
+  rename(treatment_function_name = `Treatment Function Name`)
+#gs_df2%>%
+ # ggplot(aes(y=`Treatment Function Name`, x=RTTI, colour=`Treatment Function Name`)) +
+  #geom_boxplot()
+
+#gs_df2                             
+```
+\
+
+```{r}
+#Create the interactive boxplot chart
+hcboxplot(
+  x = gs_df2$RTTI,
+  var = gs_df2$treatment_function_name,
+  name = "RTTI",
+  color = "black",
+  outliers = FALSE
+) %>%
+  hc_chart(type = "column") %>%
+  hc_title(text = paste0("RTTI - ", month_year_data, " - NHS - Incomplete DTA (hover over points)")) %>%
+  hc_yAxis(title = list(text = "RTTI")) %>%
+  hc_add_series(
+    data = gs_df2,
+    type = "scatter",
+    hcaes(x = "treatment_function_name", 
+          y = "RTTI_rounded", 
+          group = "treatment_function_name"
+          )) %>%
+  hc_tooltip(formatter = JS("function(){
+                            return (' ' + this.point.Provider + ' <br>' + this.point.treatment_function_name + ' <br> RTTI: ' + this.point.RTTI_rounded)
+                            }")) %>%
+  
+  
+  
+hc_plotOptions(scatter = list(
+    color = "#FF7256",
+    marker = list(
+      radius = 2.5,
+      symbol = "circle",
+      lineWidth = 1
+    )
+  ))  %>%
+  hc_plotOptions(scatter = list(jitter = list(x = .1, y = 0)))
+```
+
+\
+
+Providers with RTTI larger than $Q_3 + 1.5 IR$, where $Q_3$ is the 3rd quartile and $IR$ is the interquartile range of RTTI, are considered as "outliers", i.e. they are providers with a very large RTTI, compared to the RTTI of the other providers, within the treatment function.
+
+In the following table, the "outlying" providers are identified using the rule above.
+The table can be filtered by Region, Provider and Treatment Function.
+
+
+
+
+```{r}
+gs_df2 %>%
+  group_by(treatment_function_name) %>%
+  filter(RTTI > quantile(RTTI, 0.75) + 1.5*IQR(RTTI)) %>%
+  select(Region, Provider, treatment_function_name, RTTI_rounded) %>%
+  arrange(Region, Provider, treatment_function_name) %>%
+  rename(`Treatment Function` = treatment_function_name, RTTI=RTTI_rounded) %>%
+  mutate(Provider=as.factor(Provider), `Treatment Function` = as.factor(`Treatment Function`), Region=as.factor(Region)) %>%
+  datatable( 
+          rownames = FALSE, 
+          filter = 'top', 
+          class = 'cell-border stripe', 
+          options = list(
+            columnDefs = list(list(targets = 3, searchable = FALSE)),
+            pageLength = 25, 
+            autoWidth = TRUE
+            ),
+          caption = paste0("NHS providers with very high RTTI - ", month_year_data, "  - Inc.DTA - filter by Region, Provider, Tr.Function")
+          )
+```
+
+
+
+
+\
+
+As expected, we get a different distribution of RTTI, by medical specialty, for IH providers. See the boxplot below. The vertical axis has the same maximum value, for the sake of comparison between NHS and IH providers.
+
+Note that the distribution for General Internal Medicine is rather distorted by the boxplot because there are only 2 providers: one with low RTTI, the other one with high RTTI.
+
+Considering Gynaecology, RTTI for some IH providers is higher than all of the RTTI for NHS providers.
+
+
+```{r}
+#data for boxplot
+gs_df3 <- read_csv(params$data_file_provider) %>% 
+  mutate(Provider = str_to_title(Provider)) %>%
+  filter(Date == params$year_month, `RTT Part Description` == "Incomplete DTA", `Treatment Function Name` != "Total", NHS=="FALSE") %>%
+  mutate(NHS = ifelse(NHS=="TRUE", "NHS", "IH")) %>%
+  mutate(RTTI_rounded = round(RTTI, 2)) %>%
+  rename(treatment_function_name = `Treatment Function Name`) #%>%
+  #mutate(Provider = str_replace(Provider, "NHS FOUNDATION TRUST", ""))
+
+#gs_df2%>%
+ # ggplot(aes(y=`Treatment Function Name`, x=RTTI, colour=`Treatment Function Name`)) +
+  #geom_boxplot()
+```
+
+\
+
+
+```{r}
+#Create the interactive boxplot chart
+hcboxplot(
+  x = gs_df3$RTTI,
+  var = gs_df3$treatment_function_name,
+  name = "RTTI",
+  color = "black",
+  outliers = FALSE
+) %>%
+  hc_chart(type = "column") %>%
+  hc_title(text = paste0("RTTI - ", month_year_data, " - IH (hover over points)")) %>%
+  hc_yAxis(title = list(text = "RTTI"), max=15) %>%
+  hc_add_series(
+    data = gs_df3,
+    type = "scatter",
+    hcaes(x = "treatment_function_name", 
+          y = "RTTI_rounded", 
+          group = "treatment_function_name"
+          )) %>%
+  hc_tooltip(formatter = JS("function(){
+                            return (' ' + this.point.Provider + ' <br>' + this.point.treatment_function_name + ' <br> RTTI: ' + this.point.RTTI_rounded)
+                            }")) %>%
+  
+  
+  
+hc_plotOptions(scatter = list(
+    color = "#00FFFF",
+    marker = list(
+      radius = 2.5,
+      symbol = "circle",
+      lineWidth = 1
+    )
+  ))  %>%
+  hc_plotOptions(scatter = list(jitter = list(x = .12, y = 0)))
+  
+```
+
+
+\
+
+\
+
+## Ranking of medical specialties by RTTI
+
+The following table contains medical specialties ranked by the national level RTTI on `r month_year_data`. This is for NHS providers.
+The higher the rank the higher the RTTI. The number in brackets is the RTTI.
+
+As can be seen RTTI where there is a DTA is higher. Also, Elderly Medicine, Rheumatology and Mental Health have the lowest waiting times (RTTI <1), at least in `r month_year_data`.
+
+On the other hand, Gynaecology, Trauma & Orthopaedics, Oral Surgery and Ear Nose and Throat are among the medical specialties where waiting times are the longest.
+
+
+```{r}
+lt1 <- read_csv(params$data_file_national) %>%
+  filter(Date==params$year_month, NHS==TRUE, `Treatment Function Name` != "Total")
+
+lt1_incomplete_dta <- lt1 %>% 
+  filter(`RTT Part Description` == "Incomplete DTA") %>%
+  arrange(desc(RTTI))
+
+lt1_incomplete <- lt1 %>% 
+  filter(`RTT Part Description` == "Incomplete") %>%
+  arrange(desc(RTTI))
+
+lt1_complete_dta <- lt1 %>% 
+  filter(`RTT Part Description` == "Completed DTA") %>%
+  arrange(desc(RTTI))
+
+lt1_complete_nodta <- lt1 %>% 
+  filter(`RTT Part Description` == "Completed No DTA") %>%
+  arrange(desc(RTTI))
+
+medical_specialties <- lt1 %>% select(`Treatment Function Name`) %>% distinct()
+#medical_specialties
+```
+
+
+```{r}
+col1 <- seq(23, 1, -1)
+col2_text <- lt1_incomplete %>% select(`Treatment Function Name`, RTTI) %>% mutate(coltext=paste0(`Treatment Function Name`, "(", round(RTTI,1), ")")) %>% pull(coltext)
+col2 <- lt1_incomplete %>% select(`Treatment Function Name`) %>% pull()
+
+col3_text <- lt1_incomplete_dta %>% select(`Treatment Function Name`, RTTI) %>% mutate(coltext=paste0(`Treatment Function Name`, "(", round(RTTI,1), ")")) %>% pull(coltext)
+col3 <- lt1_incomplete_dta %>% select(`Treatment Function Name`) %>% pull()
+
+col4_text <- lt1_complete_nodta %>% select(`Treatment Function Name`, RTTI) %>% mutate(coltext=paste0(`Treatment Function Name`, "(", round(RTTI,1), ")")) %>% pull(coltext)
+col4 <- lt1_complete_nodta %>% select(`Treatment Function Name`) %>% pull()
+  
+col5_text <- lt1_complete_dta %>% select(`Treatment Function Name`, RTTI) %>%mutate(coltext=paste0(`Treatment Function Name`, "(", round(RTTI,1), ")")) %>%  pull(coltext)
+col5 <- lt1_complete_dta %>% select(`Treatment Function Name`) %>% pull()
+
+df <- tibble(Rank = col1, `Incomplete DTA` = col3_text, `Incomplete` = col2_text, `Complete DTA` = col5_text, `Complete no DTA` = col4_text)
+#df
+#write_csv(df, "df_for league_table_specialty.csv")
+```
+
+
+```{r}
+#df <- read_csv("df_for league_table_specialty.csv")
+colores <- c("lightblue", "lightgreen", "lightpink", "red",   "blue", "navajowhite", "orange", "green", "yellow", "brown",
+             "magenta",   "slateblue",  "darkgreen", "white", "lavender", "deepskyblue", "lightcyan", "burlywood", "royalblue","aquamarine", "darkkhaki", "palevioletred", "darkgoldenrod")
+
+colores_inc <- colores[match(col2,col3)]
+colores_comp_nodta <- colores[match(col4, col3)]
+colores_comp_dta <- colores[match(col5,col3)]
+
+#colores_inc
+#```
+
+
+datatable(df, 
+          rownames = FALSE, 
+          class = 'cell-border stripe', 
+          options = list(pageLength = 23), 
+          caption = paste0("National level RTTI - NHS - ", month_year_data)
+          ) %>%
+  formatStyle(
+    "Incomplete DTA",
+    backgroundColor = styleEqual(
+      unique(df$`Incomplete DTA`), colores)) %>%
+  formatStyle(
+    'Incomplete',
+    backgroundColor = styleEqual(
+    unique(df$`Incomplete`), colores_inc ))%>%
+  formatStyle(
+    'Complete no DTA',
+    backgroundColor = styleEqual(
+    unique(df$`Complete no DTA`), colores_comp_nodta ))%>%
+  formatStyle(
+    'Complete DTA',
+    backgroundColor = styleEqual(
+    unique(df$`Complete DTA`), colores_comp_dta )) %>%
+  formatStyle('Incomplete', fontWeight = c('bold')) %>%
+  formatStyle('Incomplete DTA', fontWeight = c('bold')) %>%
+  formatStyle('Complete no DTA', fontWeight = c('bold')) %>%
+  formatStyle('Complete DTA', fontWeight = c('bold'))
+```
+
+\
+
+
+Alternatively, the information in the table can be displayed as follows
+
+```{r fig.height=10}
+BLUE <- "#076fa2"
+p1 <- read_csv(params$data_file_national) %>%
+  filter(Date==params$year_month, NHS==TRUE, `Treatment Function Name` != "Total") %>%
+  filter(`RTT Part Description` == "Incomplete DTA") %>%
+
+  ggplot( aes(y = reorder(`Treatment Function Name`, RTTI), x = RTTI)) +
+  geom_bar(stat = "identity", fill=BLUE)+
+  labs(
+    y="", x="",
+    subtitle = "Incomplete DTA",
+    title = paste0("RTTI - ", month_year_data, " - NHS - National")
+  ) + 
+  scale_x_continuous(
+    limits = c(0, 4.7),
+    breaks = seq(0, 5, by = 0.5), 
+    expand = c(0, 0), # The horizontal axis does not extend to either side
+    position = "top"  # Labels are located on the top
+  ) +
+  # The vertical axis only extends upwards 
+  scale_y_discrete(expand = expansion(add = c(0, 0.5))) +
+  theme(
+    # Set background color to white
+    panel.background = element_rect(fill = "white"),
+    # Set the color and the width of the grid lines for the horizontal axis
+    panel.grid.major.x = element_line(color = "#A8BAC4", size = 0.3),
+    # Remove tick marks by setting their length to 0
+    axis.ticks.length = unit(0, "mm"),
+    # Remove the title for both axes
+    axis.title = element_blank(),
+    # Only left line of the vertical axis is painted in black
+    axis.line.y.left = element_line(color = "black"),
+    # Remove labels from the vertical axis
+    #axis.text.y = element_blank(),
+    # But customize labels for the horizontal axis
+    axis.text.x = element_text(family = "Econ Sans Cnd", size = 6)
+  )+
+  geom_text(
+    #data = subset(yearly_appl_type, number >= 5000),
+    aes(label = round(RTTI,2)),
+    #aes(x=-0.1, y = `Treatment Function Name`, label = round(RTTI,2)),
+    hjust = 1.2,
+    #nudge_x = 0.5,
+    colour = "white",
+    family = "Econ Sans Cnd",
+    fontface="bold",
+    size = 2.8
+  )+
+  theme(
+    plot.title = element_text(
+      family = "Econ Sans Cnd", 
+      face = "bold",
+      size = 10
+    ),
+    plot.subtitle = element_text(
+      family = "Econ Sans Cnd",
+      size = 8
+    )
+  )
+
+
+p2 <- read_csv(params$data_file_national) %>%
+  filter(Date==params$year_month, NHS==TRUE, `Treatment Function Name` != "Total") %>%
+  filter(`RTT Part Description` == "Incomplete") %>%
+
+  ggplot( aes(y = reorder(`Treatment Function Name`, RTTI), x = RTTI)) +
+  geom_bar(stat = "identity", fill=BLUE)+
+  labs(
+    y="", x="",
+    subtitle = "Incomplete",
+    title = "  "
+  ) + 
+  scale_x_continuous(
+    limits = c(0, 4.7),
+    breaks = seq(0, 5, by = 0.5), 
+    expand = c(0, 0), # The horizontal axis does not extend to either side
+    position = "top"  # Labels are located on the top
+  ) +
+  # The vertical axis only extends upwards 
+  scale_y_discrete(expand = expansion(add = c(0, 0.5))) +
+  theme(
+    # Set background color to white
+    panel.background = element_rect(fill = "white"),
+    # Set the color and the width of the grid lines for the horizontal axis
+    panel.grid.major.x = element_line(color = "#A8BAC4", size = 0.3),
+    # Remove tick marks by setting their length to 0
+    axis.ticks.length = unit(0, "mm"),
+    # Remove the title for both axes
+    axis.title = element_blank(),
+    # Only left line of the vertical axis is painted in black
+    axis.line.y.left = element_line(color = "black"),
+    # Remove labels from the vertical axis
+    #axis.text.y = element_blank(),
+    # But customize labels for the horizontal axis
+    axis.text.x = element_text(family = "Econ Sans Cnd", size = 6)
+  )+
+  geom_text(
+    #data = subset(yearly_appl_type, number >= 5000),
+    aes(label = round(RTTI,2)),
+    #aes(x=-0.1, y = `Treatment Function Name`, label = round(RTTI,2)),
+    hjust = 1.2,
+    #nudge_x = 0.5,
+    colour = "white",
+    family = "Econ Sans Cnd",
+    fontface="bold",
+    size = 2.8
+  )+
+  theme(
+    plot.title = element_text(
+      family = "Econ Sans Cnd", 
+      face = "bold",
+      size = 10
+    ),
+    plot.subtitle = element_text(
+      family = "Econ Sans Cnd",
+      size = 8
+    )
+  )
+
+
+p3 <- read_csv(params$data_file_national) %>%
+  filter(Date==params$year_month, NHS==TRUE, `Treatment Function Name` != "Total") %>%
+  filter(`RTT Part Description` == "Completed DTA") %>%
+
+  ggplot( aes(y = reorder(`Treatment Function Name`, RTTI), x = RTTI)) +
+  geom_bar(stat = "identity", fill=BLUE)+
+  labs(
+    y="", x="",
+    subtitle = "Complete DTA",
+    title = "  "
+  ) + 
+  scale_x_continuous(
+    limits = c(0, 4.7),
+    breaks = seq(0, 5, by = 0.5), 
+    expand = c(0, 0), # The horizontal axis does not extend to either side
+    position = "top"  # Labels are located on the top
+  ) +
+  # The vertical axis only extends upwards 
+  scale_y_discrete(expand = expansion(add = c(0, 0.5))) +
+  theme(
+    # Set background color to white
+    panel.background = element_rect(fill = "white"),
+    # Set the color and the width of the grid lines for the horizontal axis
+    panel.grid.major.x = element_line(color = "#A8BAC4", size = 0.3),
+    # Remove tick marks by setting their length to 0
+    axis.ticks.length = unit(0, "mm"),
+    # Remove the title for both axes
+    axis.title = element_blank(),
+    # Only left line of the vertical axis is painted in black
+    axis.line.y.left = element_line(color = "black"),
+    # Remove labels from the vertical axis
+    #axis.text.y = element_blank(),
+    # But customize labels for the horizontal axis
+    axis.text.x = element_text(family = "Econ Sans Cnd", size = 6)
+  )+
+  geom_text(
+    #data = subset(yearly_appl_type, number >= 5000),
+    aes(label = round(RTTI,2)),
+    #aes(x=-0.1, y = `Treatment Function Name`, label = round(RTTI,2)),
+    hjust = 1.2,
+    #nudge_x = 0.5,
+    colour = "white",
+    family = "Econ Sans Cnd",
+    fontface="bold",
+    size = 2.8
+  )+
+  theme(
+    plot.title = element_text(
+      family = "Econ Sans Cnd", 
+      face = "bold",
+      size = 10
+    ),
+    plot.subtitle = element_text(
+      family = "Econ Sans Cnd",
+      size = 8
+    )
+  )
+
+
+p4 <- read_csv(params$data_file_national) %>%
+  filter(Date==params$year_month, NHS==TRUE, `Treatment Function Name` != "Total") %>%
+  filter(`RTT Part Description` == "Completed No DTA") %>%
+
+  ggplot( aes(y = reorder(`Treatment Function Name`, RTTI), x = RTTI)) +
+  geom_bar(stat = "identity", fill=BLUE)+
+  labs(
+    y="", x="",
+    subtitle = "Complete no DTA",
+    title = "  "
+  ) + 
+  scale_x_continuous(
+    limits = c(0, 4.7),
+    breaks = seq(0, 5, by = 0.5), 
+    expand = c(0, 0), # The horizontal axis does not extend to either side
+    position = "top"  # Labels are located on the top
+  ) +
+  # The vertical axis only extends upwards 
+  scale_y_discrete(expand = expansion(add = c(0, 0.5))) +
+  theme(
+    # Set background color to white
+    panel.background = element_rect(fill = "white"),
+    # Set the color and the width of the grid lines for the horizontal axis
+    panel.grid.major.x = element_line(color = "#A8BAC4", size = 0.3),
+    # Remove tick marks by setting their length to 0
+    axis.ticks.length = unit(0, "mm"),
+    # Remove the title for both axes
+    axis.title = element_blank(),
+    # Only left line of the vertical axis is painted in black
+    axis.line.y.left = element_line(color = "black"),
+    # Remove labels from the vertical axis
+    #axis.text.y = element_blank(),
+    # But customize labels for the horizontal axis
+    axis.text.x = element_text(family = "Econ Sans Cnd", size = 6)
+  )+
+  geom_text(
+    #data = subset(yearly_appl_type, number >= 5000),
+    aes(label = round(RTTI,2)),
+    #aes(x=-0.1, y = `Treatment Function Name`, label = round(RTTI,2)),
+    hjust = 1.2,
+    #nudge_x = 0.5,
+    colour = "white",
+    family = "Econ Sans Cnd",
+    fontface="bold",
+    size = 2.8
+  )+
+  theme(
+    plot.title = element_text(
+      family = "Econ Sans Cnd", 
+      face = "bold",
+      size = 10
+    ),
+    plot.subtitle = element_text(
+      family = "Econ Sans Cnd",
+      size = 8
+    )
+  )
+
+
+
+grid.arrange(p1,p2, p3,p4)    
+```
+
+\
+
+
+And for comparison with IH
+
+```{r fig.height=12}
+
+med_sp <- read_csv(params$data_file_national) %>%
+  filter(Date==params$year_month,  `Treatment Function Name` != "Total", NHS=="TRUE") %>%
+  filter(`RTT Part Description` == "Incomplete DTA") %>%
+  arrange(RTTI) %>%
+  select(`Treatment Function Name`) %>%
+  pull()
+
+p1 <- read_csv(params$data_file_national) %>%
+  filter(Date==params$year_month,  `Treatment Function Name` != "Total") %>%
+  filter(`RTT Part Description` == "Incomplete DTA") %>%
+  mutate(NHS=ifelse(NHS=="TRUE", "NHS", "IH")) %>%
+  mutate(`Treatment Function Name`= ordered(`Treatment Function Name`, levels=med_sp)) %>%
+ 
+
+  ggplot( aes(y = `Treatment Function Name`, x = RTTI, fill=NHS)) +
+  geom_bar(stat = "identity", position=position_dodge(), width = 0.85
+           )+
+  #theme(aspect.ratio = 3/5)+
+  labs(
+    y="", x="",
+    subtitle = "Incomplete DTA",
+    title = paste0("RTTI - ", month_year_data, " - National")
+  ) + 
+  scale_x_continuous(
+    limits = c(-0.2, 4.7),
+    breaks = seq(0, 5, by = 0.5), 
+    expand = c(0, 0), # The horizontal axis does not extend to either side
+    position = "top"  # Labels are located on the top
+  ) +
+  # The vertical axis only extends upwards 
+  scale_y_discrete(expand = expansion(add = c(0, 0.5))) +
+  theme(
+    # Set background color to white
+    panel.background = element_rect(fill = "white"),
+    # Set the color and the width of the grid lines for the horizontal axis
+    panel.grid.major.x = element_line(color = "#A8BAC4", size = 0.3),
+    # Remove tick marks by setting their length to 0
+    axis.ticks.x.length = unit(0, "mm"),
+     # Remove tick marks by setting their length to 0
+    axis.ticks.y.length = unit(1, "mm"),
+    # Remove the title for both axes
+    axis.title = element_blank(),
+    # Only left line of the vertical axis is painted in black
+    axis.line.y.left = element_line(color = "black"),
+    # Remove labels from the vertical axis
+    #axis.text.y = element_blank(),
+    # But customize labels for the horizontal axis
+    axis.text.x = element_text(family = "Econ Sans Cnd", size = 6)
+  )+
+  geom_text(
+    #data = subset(yearly_appl_type, number >= 5000),
+    aes(label = round(RTTI,2)),
+    #aes(x=-0.01, y = `Treatment Function Name`, label = round(RTTI,2)),
+    position = position_dodge(0.9),
+    hjust = 1.1,
+    vjust=0.09,
+    #nudge_x = 0.5,
+    colour = "black",
+    family = "Econ Sans Cnd",
+    fontface="bold",
+    size = 2
+  )+
+  scale_fill_manual(values=c("plum1", 'darkmagenta'))+
+  theme(
+    legend.title = element_blank(),
+    legend.position = c(.95, .05),
+    legend.justification = c("right", "bottom"),
+    legend.box.just = "right") +
+  theme(
+    plot.title = element_text(
+      family = "Econ Sans Cnd", 
+      face = "bold",
+      size = 10
+    ),
+    plot.subtitle = element_text(
+      family = "Econ Sans Cnd",
+      size = 8
+    )
+  ) #+
+  #theme(
+    #axis.text=element_text(size=20), 
+    #legend.text = element_text(size=30))
+
+med_sp <- read_csv(params$data_file_national) %>%
+  filter(Date==params$year_month,  `Treatment Function Name` != "Total", NHS=="TRUE") %>%
+  filter(`RTT Part Description` == "Incomplete") %>%
+  arrange(RTTI) %>%
+  select(`Treatment Function Name`) %>%
+  pull()
+
+p2 <- read_csv(params$data_file_national) %>%
+  filter(Date==params$year_month,  `Treatment Function Name` != "Total") %>%
+  filter(`RTT Part Description` == "Incomplete") %>%
+  mutate(NHS=ifelse(NHS=="TRUE", "NHS", "IH")) %>%
+  mutate(`Treatment Function Name`= ordered(`Treatment Function Name`, levels=med_sp)) %>%
+ 
+
+  ggplot( aes(y = `Treatment Function Name`, x = RTTI, fill=NHS)) +
+  geom_bar(stat = "identity", position=position_dodge(), width = 0.8
+           )+
+  #theme(aspect.ratio = 3/5)+
+  labs(
+    y="", x="",
+    subtitle = "Incomplete",
+    title = " "
+  ) + 
+  scale_x_continuous(
+    limits = c(-0.2, 4.7),
+    breaks = seq(0, 5, by = 0.5), 
+    expand = c(0, 0), # The horizontal axis does not extend to either side
+    position = "top"  # Labels are located on the top
+  ) +
+  # The vertical axis only extends upwards 
+  scale_y_discrete(expand = expansion(add = c(0, 0.5))) +
+  theme(
+    # Set background color to white
+    panel.background = element_rect(fill = "white"),
+    # Set the color and the width of the grid lines for the horizontal axis
+    panel.grid.major.x = element_line(color = "#A8BAC4", size = 0.3),
+    # Remove tick marks by setting their length to 0
+    axis.ticks.x.length = unit(0, "mm"),
+     # Remove tick marks by setting their length to 0
+    axis.ticks.y.length = unit(1, "mm"),
+    # Remove the title for both axes
+    axis.title = element_blank(),
+    # Only left line of the vertical axis is painted in black
+    axis.line.y.left = element_line(color = "black"),
+    # Remove labels from the vertical axis
+    #axis.text.y = element_blank(),
+    # But customize labels for the horizontal axis
+    axis.text.x = element_text(family = "Econ Sans Cnd", size = 6)
+  )+
+  geom_text(
+    #data = subset(yearly_appl_type, number >= 5000),
+    aes(label = round(RTTI,2)),
+    #aes(x=-0.01, y = `Treatment Function Name`, label = round(RTTI,2)),
+    position = position_dodge(0.9),
+    hjust = 1.1,
+    vjust=0.09,
+    #nudge_x = 0.5,
+    colour = "black",
+    family = "Econ Sans Cnd",
+    fontface="bold",
+    size = 2
+  )+
+  scale_fill_manual(values=c("plum1", 'darkmagenta'))+
+  theme(
+    legend.position = "none"
+    #legend.title = element_blank(),
+    #legend.position = c(.8, .1),
+    #legend.justification = c("right", "bottom"),
+    #legend.box.just = "right"
+    ) +
+  theme(
+    plot.title = element_text(
+      family = "Econ Sans Cnd", 
+      face = "bold",
+      size = 10
+    ),
+    plot.subtitle = element_text(
+      family = "Econ Sans Cnd",
+      size = 8
+    )
+  ) #+
+  #theme(
+    #axis.text=element_text(size=20) )
+   
+
+
+med_sp <- read_csv(params$data_file_national) %>%
+  filter(Date==params$year_month,  `Treatment Function Name` != "Total", NHS=="TRUE") %>%
+  filter(`RTT Part Description` == "Completed DTA") %>%
+  arrange(RTTI) %>%
+  select(`Treatment Function Name`) %>%
+  pull()
+
+p3 <- read_csv(params$data_file_national) %>%
+  filter(Date==params$year_month,  `Treatment Function Name` != "Total") %>%
+  filter(`RTT Part Description` == "Completed DTA") %>%
+  mutate(NHS=ifelse(NHS=="TRUE", "NHS", "IH")) %>%
+  mutate(`Treatment Function Name`= ordered(`Treatment Function Name`, levels=med_sp)) %>%
+ 
+
+  ggplot( aes(y = `Treatment Function Name`, x = RTTI, fill=NHS)) +
+  geom_bar(stat = "identity", position=position_dodge(), width = 0.8
+           )+
+  #theme(aspect.ratio = 3/5)+
+  labs(
+    y="", x="",
+    subtitle = "Complete DTA",
+    title = " "
+  ) + 
+  scale_x_continuous(
+    limits = c(-0.2, 4.7),
+    breaks = seq(0, 5, by = 0.5), 
+    expand = c(0, 0), # The horizontal axis does not extend to either side
+    position = "top"  # Labels are located on the top
+  ) +
+  # The vertical axis only extends upwards 
+  scale_y_discrete(expand = expansion(add = c(0, 0.5))) +
+  theme(
+    # Set background color to white
+    panel.background = element_rect(fill = "white"),
+    # Set the color and the width of the grid lines for the horizontal axis
+    panel.grid.major.x = element_line(color = "#A8BAC4", size = 0.3),
+    # Remove tick marks by setting their length to 0
+    axis.ticks.x.length = unit(0, "mm"),
+     # Remove tick marks by setting their length to 0
+    axis.ticks.y.length = unit(1, "mm"),
+    # Remove the title for both axes
+    axis.title = element_blank(),
+    # Only left line of the vertical axis is painted in black
+    axis.line.y.left = element_line(color = "black"),
+    # Remove labels from the vertical axis
+    #axis.text.y = element_blank(),
+    # But customize labels for the horizontal axis
+    axis.text.x = element_text(family = "Econ Sans Cnd", size = 6)
+  )+
+  geom_text(
+    #data = subset(yearly_appl_type, number >= 5000),
+    aes(label = round(RTTI,2)),
+    #aes(x=-0.01, y = `Treatment Function Name`, label = round(RTTI,2)),
+    position = position_dodge(0.9),
+    hjust = 1.1,
+    vjust=0.09,
+    #nudge_x = 0.5,
+    colour = "black",
+    family = "Econ Sans Cnd",
+    fontface="bold",
+    size = 2
+  )+
+  scale_fill_manual(values=c("plum1", 'darkmagenta'))+
+  theme(
+    legend.position = "none"
+    #legend.title = element_blank(),
+    #legend.position = c(.8, .1),
+    #legend.justification = c("right", "bottom"),
+    #legend.box.just = "right"
+    ) +
+  theme(
+    plot.title = element_text(
+      family = "Econ Sans Cnd", 
+      face = "bold",
+      size = 10
+    ),
+    plot.subtitle = element_text(
+      family = "Econ Sans Cnd",
+      size = 8
+    )
+  )#+
+  #theme(
+    #axis.text=element_text(size=20) 
+    #legend.text = element_text(size=30)
+    #)
+
+med_sp <- read_csv(params$data_file_national) %>%
+  filter(Date==params$year_month,  `Treatment Function Name` != "Total", NHS=="TRUE") %>%
+  filter(`RTT Part Description` == "Completed No DTA") %>%
+  arrange(RTTI) %>%
+  select(`Treatment Function Name`) %>%
+  pull()
+
+p4 <- read_csv(params$data_file_national) %>%
+  filter(Date==params$year_month,  `Treatment Function Name` != "Total") %>%
+  filter(`RTT Part Description` == "Completed No DTA") %>%
+  mutate(NHS=ifelse(NHS=="TRUE", "NHS", "IH")) %>%
+  mutate(`Treatment Function Name`= ordered(`Treatment Function Name`, levels=med_sp)) %>%
+ 
+
+  ggplot( aes(y = `Treatment Function Name`, x = RTTI, fill=NHS)) +
+  geom_bar(stat = "identity", position=position_dodge(), width = 0.8
+           )+
+  #theme(aspect.ratio = 3/5)+
+  labs(
+    y="", x="",
+    subtitle = "Complete No DTA",
+    title = " "
+  ) + 
+  scale_x_continuous(
+    limits = c(-0.2, 4.7),
+    breaks = seq(0, 5, by = 0.5), 
+    expand = c(0, 0), # The horizontal axis does not extend to either side
+    position = "top"  # Labels are located on the top
+  ) +
+  # The vertical axis only extends upwards 
+  scale_y_discrete(expand = expansion(add = c(0, 0.5))) +
+  theme(
+    # Set background color to white
+    panel.background = element_rect(fill = "white"),
+    # Set the color and the width of the grid lines for the horizontal axis
+    panel.grid.major.x = element_line(color = "#A8BAC4", size = 0.3),
+    # Remove tick marks by setting their length to 0
+    axis.ticks.x.length = unit(0, "mm"),
+     # Remove tick marks by setting their length to 0
+    axis.ticks.y.length = unit(1, "mm"),
+    # Remove the title for both axes
+    axis.title = element_blank(),
+    # Only left line of the vertical axis is painted in black
+    axis.line.y.left = element_line(color = "black"),
+    # Remove labels from the vertical axis
+    #axis.text.y = element_blank(),
+    # But customize labels for the horizontal axis
+    axis.text.x = element_text(family = "Econ Sans Cnd", size = 6)
+  )+
+  geom_text(
+    #data = subset(yearly_appl_type, number >= 5000),
+    aes(label = round(RTTI,2)),
+    #aes(x=-0.01, y = `Treatment Function Name`, label = round(RTTI,2)),
+    position = position_dodge(0.9),
+    hjust = 1.1,
+    vjust=0.09,
+    #nudge_x = 0.5,
+    colour = "black",
+    family = "Econ Sans Cnd",
+    fontface="bold",
+    size = 2
+  )+
+  scale_fill_manual(values=c("plum1", 'darkmagenta'))+
+  theme(
+    legend.position = "none",
+    #legend.title = element_blank(),
+    #legend.position = c(.8, .1),
+    #legend.justification = c("right", "bottom"),
+    #legend.box.just = "right"
+    ) +
+  theme(
+    plot.title = element_text(
+      family = "Econ Sans Cnd", 
+      face = "bold",
+      size = 10
+    ),
+    plot.subtitle = element_text(
+      family = "Econ Sans Cnd",
+      size = 8
+    )
+  )#+
+  #theme(
+    #axis.text=element_text(size=20) 
+    #legend.text = element_text(size=30)
+    #)
+
+
+
+
+#p1
+grid.arrange(p1,p2, p3,p4)    
+```
+
+\
+
+
+
+
+## RTTI by provider and medical specialty
+
+
+Click on the white filter boxes, below the column names, to choose a region, provider or medical specialty.
+
+Empty cells represent a missing value (no information about the provider for the medical specialty).
+
+\
+
+
+```{r}
+df <- read_csv(params$data_file_provider) %>%
+  mutate(Provider = str_to_title(Provider)) %>%
+  mutate(Provider = str_replace(Provider, "Nhs", "NHS")) %>%
+  mutate(Provider = str_replace(Provider, "NHS Foundation Trust", "")) %>%
+  mutate(Provider = str_replace(Provider, "NHS Trust", ""))
+#names(df)
+```
+
+```{r}
+aux <- df %>%
+  filter(Date == params$year_month, NHS=="TRUE") %>%
+  filter(`Treatment Function Name` != "Total") %>% 
+  mutate(RTTI=round(RTTI,2)) %>%
+  select(Region, `NHS FT` = Provider, `Treatment Function`=`Treatment Function Name`, `RTT Part Description`, RTTI)  %>%
+  pivot_wider(names_from = `RTT Part Description`, values_from = RTTI) %>%
+  mutate(Region = as.factor(Region),  `Treatment Function` = as.factor(`Treatment Function`)) %>%
+  #mutate(`NHS FT` = str_replace(`NHS FT`, " NHS TRUST", "")) %>%
+  mutate(`NHS FT` = as.factor(`NHS FT`)) %>%
+  rename(` Provider(NHS) ` = `NHS FT`) %>%
+  select(Region, ` Provider(NHS) `, `Treatment Function`, `Incomplete DTA`, `Incomplete`, `Complete DTA` = `Completed DTA`, `Complete no DTA` = `Completed No DTA`)
+
+
+datatable(aux, 
+          rownames = FALSE, 
+          filter = 'top', 
+          class = 'cell-border stripe', 
+          options = list(
+            autoWidth = FALSE,
+            #dom = "Pltip",
+            columnDefs = list(list(targets = 3:6, searchable = FALSE),
+                              list(targets = 0:2, width = '1600px'),
+                              list(targets = 3:6, width = '100px')
+                              ),
+            pageLength = 23
+                        ),
+           caption = paste0("NHS providers - ", month_year_data, " - filter by Region, Provider, Treatment Function")
+          )
+
+```
+
+
+
+
+
+\
+
+## Ranked RTTI of medical specialties by provider
+
+
+Low rank corresponds to low RTTI.
+
+The table can be filtered. Click on the white boxes below the column names.
+
+\
+
+
+```{r}
+medical_specialties <- df %>% select(`Treatment Function Name`) %>% filter(`Treatment Function Name` != "Total") %>% distinct() %>% pull()
+#medical_specialties
+```
+```{r}
+#colores
+```
+
+
+```{r}
+aux <- df %>%
+  filter(Date == params$year_month, NHS=="TRUE") %>%
+  #filter(Region == "South") %>%
+  mutate(Provider = str_replace(Provider, " NHS FOUNDATION TRUST", "")) %>%
+  mutate(Provider = str_replace(Provider, " NHS TRUST", "")) %>%
+  filter(`Treatment Function Name` != "Total") %>% 
+  mutate(RTTI=round(RTTI,2)) %>%
+  select(Region, "NHS FT" = Provider, `Treatment Function`=`Treatment Function Name`, `RTT Part Description`, RTTI)  %>%
+  pivot_wider(names_from = `RTT Part Description`, values_from = RTTI) %>%
+  group_by(`NHS FT`) %>%
+  summarise(Region, `NHS FT`, `Treatment Function`, nr_specialties=n(), `Completed DTA`, `Completed No DTA`, `Incomplete`, `Incomplete DTA` ) %>%
+  ungroup() %>%
+  mutate(`NHS FT` = str_replace(`NHS FT` , " NHS FOUNDATION TRUST", "")) %>%
+  select(Region, everything())
+```
+
+```{r}
+complete_dta <- aux %>%
+  select(Region, `NHS FT`, `Treatment Function`, nr_specialties, `Completed DTA`) %>%
+  group_by(`NHS FT`) %>%
+  arrange(`Completed DTA`) %>%
+  mutate(Rank = seq(1:unique(nr_specialties))) %>%
+  mutate(label_complete_dta = paste0(`Treatment Function`, " (", `Completed DTA`, ")")) %>%
+  arrange(`NHS FT`, Rank) %>%
+  select(Region, `NHS FT`, `Treatment Function`, `Rank`,  label_complete_dta ) %>%
+  mutate(colores_index = match(`Treatment Function`, medical_specialties))
+
+colores_complete_dta <- complete_dta %>% pull(colores_index)
+
+complete_dta <- complete_dta %>%
+   select(Region, `NHS FT`, `Rank`, label_complete_dta )
+  
+#
+
+complete_no_dta <- aux %>%
+  select(Region, `NHS FT`, `Treatment Function`, nr_specialties, `Completed No DTA`) %>%
+  group_by(`NHS FT`) %>%
+  arrange(`Completed No DTA`) %>%
+  mutate(Rank = seq(1:unique(nr_specialties))) %>%
+  mutate(label_complete_no_dta = paste0(`Treatment Function`, " (", `Completed No DTA`, ")")) %>%
+  arrange(`NHS FT`, Rank) %>%
+  select(Region, `NHS FT`, `Treatment Function`, `Rank`, label_complete_no_dta ) %>%
+  mutate(colores_index = match(`Treatment Function`, medical_specialties))
+
+colores_complete_no_dta <- complete_no_dta %>% pull(colores_index)
+
+#colores_complete_no_dta
+
+complete_no_dta <- complete_no_dta %>%
+   select(Region, `NHS FT`, `Rank`, label_complete_no_dta )
+
+#
+
+incomplete_dta <- aux %>%
+  select(Region, `NHS FT`, `Treatment Function`, nr_specialties, `Incomplete DTA`) %>%
+  group_by(`NHS FT`) %>%
+  arrange(`Incomplete DTA`) %>%
+  mutate(Rank = seq(1:unique(nr_specialties))) %>%
+  mutate(label_incomplete_dta = paste0(`Treatment Function`, " (", `Incomplete DTA`, ")")) %>%
+  arrange(`NHS FT`, Rank) %>%
+  select(Region, `NHS FT` , `Treatment Function`, `Rank`, label_incomplete_dta ) %>%
+  mutate(colores_index = match(`Treatment Function`, medical_specialties))
+
+colores_incomplete_dta <- incomplete_dta %>% pull(colores_index)
+
+incomplete_dta <- incomplete_dta %>%
+   select(Region, `NHS FT`, `Rank`, label_incomplete_dta )
+
+#
+
+incomplete <- aux %>%
+  select(Region, `NHS FT`, `Treatment Function`, nr_specialties, `Incomplete`) %>%
+  group_by(`NHS FT`) %>%
+  arrange(`Incomplete`) %>%
+  mutate(Rank = seq(1:unique(nr_specialties))) %>%
+  mutate(label_incomplete = paste0(`Treatment Function`, " (", `Incomplete`, ")")) %>%
+  arrange(`NHS FT`, Rank) %>%
+  select(Region, `NHS FT`, `Treatment Function`, Rank, label_incomplete ) %>%
+  mutate(colores_index = match(`Treatment Function`, medical_specialties))
+
+colores_incomplete <- incomplete %>% pull(colores_index)
+
+incomplete <- incomplete %>%
+   select(Region, `NHS FT`, `Rank`, label_incomplete)
+
+#
+
+df_table <- incomplete_dta %>% 
+  inner_join(incomplete) %>%
+  inner_join(complete_dta) %>%
+  inner_join(complete_no_dta) %>%
+  rename(`Incomplete(DTA)`=label_incomplete_dta,
+         `Incomplete` = label_incomplete,
+         `Complete(DTA)` = label_complete_dta,
+         `Complete(No DTA)` = label_complete_no_dta
+         ) %>%
+  mutate(Region = as.factor(Region), `NHS FT` = as.factor(`NHS FT`), Rank = as.factor(Rank)) %>%
+  rename(` Provider(NHS) ` = `NHS FT`) %>%
+  rename(`Incomplete DTA` = `Incomplete(DTA)`, `Complete DTA` = `Complete(DTA)`, `Complete no DTA` = `Complete(No DTA)`)
+
+#df_table
+
+```
+
+```{r}
+datatable(df_table, 
+          rownames = FALSE, 
+          filter = 'top', 
+          class = 'cell-border stripe', 
+          options = list(
+            #dom = "Pltip",
+            columnDefs = list(list(targets = 3:6, searchable = FALSE)),
+            pageLength = 23, 
+            autoWidth = TRUE
+            ),
+          caption = paste0("NHS providers - ", month_year_data, " - RTTI in brackets - filter by Region, NHS FT, Rank")
+          )
+```
+
+
+```{r eval=FALSE}
+##THIS MUST BE EDITED
+datatable(df_table, 
+          rownames = FALSE, 
+          class = 'cell-border stripe',
+          options = list(dom = "Pltip", columnDefs = list(list(searchPanes = list(show = FALSE), targets = 2:5))),
+  extensions = c('Select', 'SearchPanes'),
+  selection = 'none'
+  ) %>%
+  # formatStyle(
+  #   'Incomplete',
+  #   backgroundColor = styleEqual(
+  #     df_table$`Incomplete`, colores[colores_incomplete])) %>%
+  # formatStyle(
+  #   'Incomplete(DTA)',
+  #   backgroundColor = styleEqual(
+  #     df_table$`Incomplete(DTA)`, colores[colores_incomplete_dta] ))%>%
+  # formatStyle(
+  #   'Complete(No DTA)',
+  #   backgroundColor = styleEqual(
+  #     df_table$`Complete(No DTA)`, colores[colores_complete_no_dta] ))%>%
+  # formatStyle(
+  #   'Complete(DTA)',
+  #   backgroundColor = styleEqual(
+  #     df_table$`Complete(DTA)`, colores[colores_complete_dta] )) %>%
+  formatStyle('Incomplete', fontWeight = c('bold')) %>%
+  formatStyle('Incomplete(DTA)', fontWeight = c('bold')) %>%
+  formatStyle('Complete(No DTA)', fontWeight = c('bold')) %>%
+  formatStyle('Complete(DTA)', fontWeight = c('bold'))
+
+```
+
+
+```{r eval=FALSE}
+##THIS MUST BE EDITED
+datatable(df_table, rownames = FALSE, class = 'cell-border stripe',
+  options = list(dom = "Pltip", columnDefs = list(list(searchPanes = list(show = FALSE), targets = 1:5))),
+  extensions = c('Select', 'SearchPanes'),
+  selection = 'none'
+  ) %>%
+  formatStyle(
+    'Incomplete',
+    backgroundColor = styleEqual(
+      df_table$`Incomplete`, colores[colores_incomplete])) %>%
+  formatStyle(
+    'Incomplete(DTA)',
+    backgroundColor = styleEqual(
+      df_table$`Incomplete(DTA)`, colores[colores_incomplete_dta] ))%>%
+  formatStyle(
+    'Complete(No DTA)',
+    backgroundColor = styleEqual(
+      df_table$`Complete(No DTA)`, colores[colores_complete_no_dta] ))%>%
+  formatStyle(
+    'Complete(DTA)',
+    backgroundColor = styleEqual(
+      df_table$`Complete(DTA)`, colores[colores_complete_dta] )) %>%
+  formatStyle('Incomplete', fontWeight = c('bold')) %>%
+  formatStyle('Incomplete(DTA)', fontWeight = c('bold')) %>%
+  formatStyle('Complete(No DTA)', fontWeight = c('bold')) %>%
+  formatStyle('Complete(DTA)', fontWeight = c('bold'))
+
+```
+
+
+
+
+```{r eval=FALSE}
+# 
+  col0 <- RTTPI_index_incomplete_specialty_provider %>% select(provider_abbreviated) %>% pull()
+  col1 <- rep(seq(19, 1, -1), 42)
+  col2 <- RTTPI_index_incomplete_specialty_provider %>% select(entry_incomplete) %>% pull()
+  col3 <- RTTPI_index_incomplete_dta_specialty_provider %>% select(entry_incomplete_dta) %>% pull()
+  col4 <- RTTPI_index_complete_specialty_provider %>% select(entry_complete) %>% pull()
+  col5 <- RTTPI_index_complete_dta_specialty_provider %>% select(entry_complete_dta) %>% pull()
+  data_for_interactive_table_2 <- tibble(Provider = col0, Rank = col1, Incomplete = col2, `Incomplete(DTA)` = col3, Complete = col4, `Complete(DTA)` = col5)
+#
+  aux1 <- RTTPI_index_incomplete_specialty_provider %>% select(medical_specialty_incomplete) %>% pull()
+  aux2 <- RTTPI_index_incomplete_dta_specialty_provider %>% select(medical_specialty_incomplete_dta) %>% pull()
+  aux3 <- RTTPI_index_complete_specialty_provider %>% select(medical_specialty_complete) %>% pull()
+  aux4 <- RTTPI_index_complete_dta_specialty_provider %>% select(medical_specialty_complete_dta) %>% pull()
+  
+  patron <- aux1[1:19] # we will match colors to this ordering
+  
+  aux1_2 <- match(aux1[20 : (19*42)], patron)
+  aux2_2 <- match(aux2, patron)
+  aux3_2 <- match(aux3, patron)
+  aux4_2 <- match(aux4, patron)
+  
+  aux1_3 <- c(seq(1,19,1), aux1_2)
+#    
+  colores <- c("lightblue", "lightgreen", "lightpink", "red", "blue", "navajowhite", "orange", "gray", "yellow", "brown", 
+               "magenta", "slateblue", "darkgreen", "white", "springgreen", "deepskyblue", "lightcyan", "burlywood", "royalblue")
+```
+
+
+ 
+
+
+
+\
+\
+\
+\
+
+
+
+
+
+
+
+```{r}
+#read data in
+RTT_index <- read_csv(params$data_file_provider)
+RTT_index_all <- read_csv(params$data_file_national)
+RTT_index_region <- read_csv(params$data_file_region)
+```
+
+```{r eval=FALSE}
+names(RTT_index)
+```
+```{r eval=FALSE}
+names(RTT_index_all)
+```
+```{r eval=FALSE}
+RTT_index_all %>% select(`Treatment Function Name`) %>% distinct()
+```
+```{r}
+high_rtti <- RTT_index_all %>% 
+  filter(Date == "2023-01-01", RTTI > 3, `RTT Part Description` == "Incomplete DTA", NHS=="TRUE") %>% 
+  select(`Treatment Function Name`) %>% 
+  distinct() %>%
+  filter(`Treatment Function Name` != "Urology", `Treatment Function Name` != "Total"  ) %>%
+  pull()
+```
+
+```{r}
+medium_rtti <- RTT_index_all %>% 
+  filter(Date == "2023-01-01",  RTTI > 1.5, `RTT Part Description` == "Incomplete DTA", NHS=="TRUE") %>% 
+  filter(RTTI < 3) %>%
+  select(`Treatment Function Name`) %>% 
+  distinct() %>%
+  pull()
+medium_rtti <- c(medium_rtti, "Urology")
+  
+```
+
+```{r}
+low_rtti <- RTT_index_all %>% 
+  filter(Date == "2023-01-01",  RTTI <= 1.5, `RTT Part Description` == "Incomplete DTA", NHS=="TRUE") %>% 
+  select(`Treatment Function Name`) %>% 
+  distinct() %>%
+  pull()
+```
+
+
+```{r eval=FALSE}
+RTT_index_all %>% 
+  filter(`RTT Part Description`=="Completed DTA") %>%
+  #filter(`Treatment Function Name`=="Cardiology") %>%
+  filter(NHS == TRUE) %>%
+  ggplot(aes(x=Date, y=RTTI, colour=`Treatment Function Name`)) +
+  geom_line() 
+```
+
+# RTTI Time trends 
+
+The lowest value that RTTI can achieve is 0, which is achieved when no patents are waiting more than 20 weeks from referral to the start of their treatment.
+In this sense, 0 is the "target" value of RTTI.
+Observed values of RTTI are mostly positive and, when observed through time, it is desirable that the trend is decreasing towards zero.
+
+In the following time plots of RTTI, at national level, for all treatment functions (medical specialties) are shown. Given that there are 23 medical specialties, and it is important to display the time plots in one graph, for comparison, they have been grouped into 3 subgroups, according to their RTTI value in January 2023 (NHS providers).
+
+- Treatment Functions with **high** RTTI ($RTTI>3$ in January 2023)
+  * Ear, Nose and Throat
+  * Oral Surgery
+  * Trauma and Orthopaedic
+  * Gynaecology
+  * General Surgery
+  * Other - Paediatric
+  * Other - Surgical
+  * Neurosurgical
+  * Plastic Surgery
+- Treatment Functions with **medium** RTTI ($1.5 <RTTI \leq 3$ in January 2023)
+  * Urology
+  * Other - Medical
+  * Dermatology
+  * Ophthalmology
+  * Cardiothoracic Surgery
+  * Cardiology
+  * Other - Other
+  * Gastroenterology
+  * Neurology
+- Treatment functions with **low** RTTI ($0\leq RTTI \leq 1.5$ in January 2023)
+  * Other - Mental Health
+  * Respiratory Medicine
+  * General Internal Medicine
+  * Rheumatology
+  * Elderly Medicine
+
+For the sake of brevity, only Incomplete DTA pathways are considered here.
+
+RTTI time trends are also considered for IH providers, using the same treatment function grouping as for NHS providers.
+
+\
+
+
+
+```{r eval=FALSE}
+#library(hrbrthemes) # for the `theme_ipsum()`
+max_date <- max(RTT_index_all$Date)
+min_date <- min(RTT_index_all$Date)
+break_vec <- c(seq(from = min_date, to = max_date, by = "month"))
+
+data_ends <- RTT_index_all %>% 
+  filter(Date == max(Date)) %>%
+  mutate(Date = Date + days(5)) %>%
+  filter(`RTT Part Description`=="Incomplete DTA") %>%
+  filter(NHS == TRUE) %>%
+  filter(!stringr::str_detect(`Treatment Function Name`, "Other|Total")) #%>%
+  #filter(`Treatment Function Name` %in% c("Ear Nose and Throat", "Oral Surgery", "Trauma and Orthopaedic", "Gynaecology", "General Surgery", "Other - Paediatric))
+
+plot <- RTT_index_all %>%
+  filter(`RTT Part Description`=="Incomplete DTA") %>%
+  filter(NHS == TRUE) %>%
+  filter(!stringr::str_detect(`Treatment Function Name`, "Other|Total")) %>% 
+  #filter(`Treatment Function Name` %in% c("Ear Nose and Throat", "Oral Surgery", "Trauma and Orthopaedic", "Gynaecology", "General Surgery")) %>%
+  ggplot(mapping = aes(
+    x = Date,
+    y = RTTI,
+    color = `Treatment Function Name`,
+    tooltip = `Treatment Function Name`,
+    data_id = `Treatment Function Name`
+  )) +
+  geom_line_interactive(hover_nearest = TRUE) +
+ # theme_ipsum()
+  labs(x="", y="") + #no axis labels
+  #theme_bw()+
+  theme(
+    panel.background = element_blank(), 
+    legend.key=element_blank() ) + #remove the grey background
+  theme(
+    panel.grid.major.x = element_blank() ,# remove the vertical grid lines
+    panel.grid.major.y = element_line( size=.09, color="gray" )) + # explicitly set the horizontal lines (or they will disappear too)
+  scale_x_date(breaks = break_vec, date_labels = "%b%y", expand = expansion(mult=c(0,0.15))) + #, date_breaks = "1 month") + #set tickmarks every month
+  #scale_x_date(date_labels = "%b%y", date_breaks = "1 month") + #set tickmarks every month
+  theme(axis.text.x = element_text(face="bold", size=7, angle=90)) + #make tickmark labels smaller
+  #scale_y_continuous(breaks=seq(0, max(frimley_call_abandonment$value), 5)) +
+  theme(legend.position="none") +
+  #theme(legend.title=element_blank()) +
+  geom_hline(yintercept = 0, color = "darkgrey", size=0.5        )+#, linetype = "dashed") +
+  #annotate("text", x = max_date , y = , label = "Standard is 3% or less", size=3, colour="black") +
+  geom_text(
+    data = data_ends,
+    aes(label = `Treatment Function Name` ), 
+    color = "black", 
+    size = 1.8,
+    hjust=0
+    )+
+ ggtitle("RTTI - Incomplete DTA ")
+
+interactive_plot <- girafe(ggobj = plot)
+
+interactive_plot <- girafe_options(
+  interactive_plot,
+  opts_hover(css = "stroke:#69B3A2; stroke-width: 3px; transition: all 0.3s ease;"),
+  opts_hover_inv("opacity:0.5;filter:saturate(10%);"),
+  opts_toolbar(saveaspng = FALSE)
+)
+htmltools::save_html(interactive_plot, "geom-line-interactive-3.html")
+```
+
+```{r eval=FALSE}
+htmltools::includeHTML("geom-line-interactive-3.html")
+```
+
+
+```{r eval=FALSE}
+#library(hrbrthemes) # for the `theme_ipsum()`
+max_date <- max(RTT_index_all$Date)
+min_date <- min(RTT_index_all$Date)
+break_vec <- c(seq(from = min_date, to = max_date, by = "month"))
+
+data_ends <- RTT_index_all %>% 
+  filter(Date == max(Date)) %>%
+  mutate(Date = Date + days(5)) %>%
+  filter(`RTT Part Description`=="Incomplete DTA") %>%
+  filter(NHS == FALSE) %>%
+  filter(!stringr::str_detect(`Treatment Function Name`, "Other|Total")) #%>%
+  #filter(`Treatment Function Name` %in% c("Ear Nose and Throat", "Oral Surgery", "Trauma and Orthopaedic", "Gynaecology", "General Surgery", "Other - Paediatric))
+
+plot <- RTT_index_all %>%
+  filter(`RTT Part Description`=="Incomplete DTA") %>%
+  filter(NHS == FALSE) %>%
+  filter(!stringr::str_detect(`Treatment Function Name`, "Other|Total")) %>% 
+  #filter(`Treatment Function Name` %in% c("Ear Nose and Throat", "Oral Surgery", "Trauma and Orthopaedic", "Gynaecology", "General Surgery")) %>%
+  ggplot(mapping = aes(
+    x = Date,
+    y = RTTI,
+    color = `Treatment Function Name`,
+    tooltip = `Treatment Function Name`,
+    data_id = `Treatment Function Name`
+  )) +
+  geom_line_interactive(hover_nearest = TRUE) +
+ # theme_ipsum()
+  labs(x="", y="") + #no axis labels
+  #theme_bw()+
+  theme(
+    panel.background = element_blank(), 
+    legend.key=element_blank() ) + #remove the grey background
+  theme(
+    panel.grid.major.x = element_blank() ,# remove the vertical grid lines
+    panel.grid.major.y = element_line( size=.09, color="gray" )) + # explicitly set the horizontal lines (or they will disappear too)
+  scale_x_date(breaks = break_vec, date_labels = "%b%y", expand = expansion(mult=c(0,0.15))) + #, date_breaks = "1 month") + #set tickmarks every month
+  #scale_x_date(date_labels = "%b%y", date_breaks = "1 month") + #set tickmarks every month
+  theme(axis.text.x = element_text(face="bold", size=7, angle=90)) + #make tickmark labels smaller
+  #scale_y_continuous(breaks=seq(0, max(frimley_call_abandonment$value), 5)) +
+  theme(legend.position="none") +
+  #theme(legend.title=element_blank()) +
+  geom_hline(yintercept = 0, color = "darkgrey", size=0.5        )+#, linetype = "dashed") +
+  #annotate("text", x = max_date , y = , label = "Standard is 3% or less", size=3, colour="black") +
+  geom_text(
+    data = data_ends,
+    aes(label = `Treatment Function Name` ), 
+    color = "black", 
+    size = 1.8,
+    hjust=0
+    )+
+ ggtitle("RTTI - Incomplete DTA - IH ")
+
+interactive_plot <- girafe(ggobj = plot)
+
+interactive_plot <- girafe_options(
+  interactive_plot,
+  opts_hover(css = "stroke:#69B3A2; stroke-width: 3px; transition: all 0.3s ease;"),
+  opts_hover_inv("opacity:0.5;filter:saturate(10%);"),
+  opts_toolbar(saveaspng = FALSE)
+)
+htmltools::save_html(interactive_plot, "geom-line-interactive-3.html")
+```
+
+```{r eval=FALSE}
+htmltools::includeHTML("geom-line-interactive-3.html")
+```
+
+
+```{r eval=FALSE}
+#library(hrbrthemes) # for the `theme_ipsum()`
+
+max_date <- max(RTT_index_all$Date)
+min_date <- min(RTT_index_all$Date)
+break_vec <- c(seq(from = min_date, to = max_date, by = "month"))
+
+data_ends <- RTT_index_all %>% 
+  filter(Date == max(Date)) %>%
+  mutate(Date = Date + days(5)) %>%
+  filter(`RTT Part Description`=="Completed DTA") %>%
+  filter(NHS == TRUE) %>%
+  filter(!stringr::str_detect(`Treatment Function Name`, "Other|Total")) #%>%
+  #filter(`Treatment Function Name` %in% c("Ear Nose and Throat", "Oral Surgery", "Trauma and Orthopaedic", "Gynaecology", "General Surgery"))
+
+plot <- RTT_index_all %>%
+  filter(`RTT Part Description`=="Completed DTA") %>%
+  filter(NHS == TRUE) %>%
+  filter(!stringr::str_detect(`Treatment Function Name`, "Other|Total")) %>% 
+  #filter(`Treatment Function Name` %in% c("Ear Nose and Throat", "Oral Surgery", "Trauma and Orthopaedic", "Gynaecology", "General Surgery")) %>%
+  ggplot(mapping = aes(
+    x = Date,
+    y = RTTI,
+    color = `Treatment Function Name`,
+    tooltip = `Treatment Function Name`,
+    data_id = `Treatment Function Name`
+  )) +
+  geom_line_interactive(hover_nearest = TRUE) +
+ # theme_ipsum()
+  labs(x="", y="") + #no axis labels
+  #theme_bw()+
+  theme(
+    panel.background = element_blank(), 
+    legend.key=element_blank() ) + #remove the grey background
+  theme(
+    panel.grid.major.x = element_blank() ,# remove the vertical grid lines
+    panel.grid.major.y = element_line( size=.09, color="gray" )) + # explicitly set the horizontal lines (or they will disappear too)
+  scale_x_date(breaks = break_vec, date_labels = "%b%y", expand = expansion(mult=c(0,0.15))) +
+  #scale_x_date(date_labels = "%b%y", date_breaks = "1 month") + #set tickmarks every month
+  theme(axis.text.x = element_text(face="bold", size=7, angle=90)) + #make tickmark labels smaller
+  #scale_y_continuous(breaks=seq(0, max(frimley_call_abandonment$value), 5)) +
+  theme(legend.position="none") +
+  #theme(legend.title=element_blank()) +
+  #geom_hline(yintercept = 3, color = "darkgrey", size=1, linetype = "dashed") +
+  #annotate("text", x = max_date , y = , label = "Standard is 3% or less", size=3, colour="black") +
+    geom_text(
+      data = data_ends,
+      aes(label = `Treatment Function Name` ), 
+      color = "black", 
+      size = 2,
+      hjust=0
+    )+
+  ggtitle("RTTI - Completed DTA")
+
+
+
+interactive_plot <- girafe(ggobj = plot)
+
+interactive_plot <- girafe_options(
+  interactive_plot,
+  opts_hover(css = "stroke:#69B3A2; stroke-width: 3px; transition: all 0.3s ease;"),
+  opts_hover_inv("opacity:0.5;filter:saturate(10%);"),
+  opts_toolbar(saveaspng = FALSE)
+)
+htmltools::save_html(interactive_plot, "geom-line-interactive-3.html")
+```
+
+```{r eval=FALSE}
+htmltools::includeHTML("geom-line-interactive-3.html")
+```
+
+\
+
+## High RTTI - National level
+
+As can be seen, RTTI for these treatment functions, using NHS providers only, has been decreasing since January 2024.
+
+There is a grey vertical line marking the change in government after the July 2024 elections.
+
+All these treatment functions had RTTI larger than 3 in January 2023. In March 2025, all the treatment functions have RTTI between 2 and 3, except for Oral Surgery and Ear, Nose and Throat.
+
+This is very positive and should be sustained through time.
+
+\
+
+```{r}
+#library(hrbrthemes) # for the `theme_ipsum()`
+
+max_date <- max(RTT_index_all$Date)
+min_date <- min(RTT_index_all$Date)
+break_vec <- c(seq(from = min_date, to = max_date, by = "month"))
+
+data_ends <- RTT_index_all %>% 
+  filter(Date == max(Date)) %>%
+  mutate(Date = Date + days(5)) %>%
+  filter(`RTT Part Description`=="Incomplete DTA") %>%
+  filter(NHS == TRUE) %>%
+ #filter(!stringr::str_detect(`Treatment Function Name`, "Other|Total")) %>%
+  filter(`Treatment Function Name` %in% high_rtti)
+  #c("Ear Nose and Throat", "Oral Surgery", "Trauma and Orthopaedic", "Gynaecology", "General Surgery", "Neurosurgical", "Plastic Surgery", #"Other - Paediatric", "Other - Surgical"))
+
+
+
+df <- RTT_index_all %>%
+  filter(`RTT Part Description`=="Incomplete DTA") %>%
+  filter(NHS == TRUE) %>%
+  filter(`Treatment Function Name` %in% high_rtti)
+
+plot <- df %>%
+  ggplot(mapping = aes(
+    x = Date,
+    y = RTTI,
+    color = `Treatment Function Name`,
+    tooltip = `Treatment Function Name`,
+    data_id = `Treatment Function Name`
+  )) +
+  geom_line_interactive(hover_nearest = TRUE) +
+ # theme_ipsum()
+  labs(x="", 
+       y="RTTI",
+       subtitle="Hover over line to highlight") + #no axis labels
+  #theme_bw()+
+  theme(
+    panel.background = element_blank(), 
+    legend.key=element_blank() ) + #remove the grey background
+  theme(
+    panel.grid.major.x = element_blank() ,# remove the vertical grid lines
+    panel.grid.major.y = element_line( size=.09, color="gray" )) + # explicitly set the horizontal lines (or they will disappear too)
+  scale_x_date(breaks = break_vec, date_labels = "%b%y", expand = expansion(mult=c(0,0.15))) + #, date_breaks = "1 month") + #set tickmarks every month
+  theme(axis.text.x = element_text(face="bold", size=7, angle=90)) + #make tickmark labels smaller
+  #scale_y_continuous(breaks=seq(0, max(frimley_call_abandonment$value), 5)) +
+  theme(legend.position="none") +
+  #theme(legend.title=element_blank()) +
+  geom_vline(xintercept = as.Date("2024-08-01"), color = "darkgrey", size=0.5, linetype = "dashed") +
+  #annotate("text", x = max_date , y = , label = "Standard is 3% or less", size=3, colour="black") +
+    geom_text(
+      data = data_ends,
+      aes(label = `Treatment Function Name` ), 
+      color = "black", 
+      size = 2,
+      hjust=0
+    )+
+  ggtitle("Treatment Functions with high RTTI - Incomplete DTA - NHS")
+
+
+
+interactive_plot <- girafe(ggobj = plot)
+
+interactive_plot <- girafe_options(
+  interactive_plot,
+  opts_hover(css = "stroke:#69B3A2; stroke-width: 3px; transition: all 0.3s ease;"),
+  opts_hover_inv("opacity:0.1;filter:saturate(10%);"),
+  opts_toolbar(saveaspng = FALSE)
+)
+htmltools::save_html(interactive_plot, "geom-line-interactive-3.html")
+```
+
+\
+
+```{r}
+htmltools::includeHTML("geom-line-interactive-3.html")
+```
+
+\
+
+For IH providers, it is also possible to observe a reduction in RTTI though time for most treatment functions, although the effect is less pronounced because the initial RTTI, in January 2023, was lower than 3, except for Ear, Nose and Throat.
+
+
+```{r}
+#library(hrbrthemes) # for the `theme_ipsum()`
+
+max_date <- max(RTT_index_all$Date)
+min_date <- min(RTT_index_all$Date)
+break_vec <- c(seq(from = min_date, to = max_date, by = "month"))
+
+data_ends <- RTT_index_all %>% 
+  filter(Date == max(Date)) %>%
+  mutate(Date = Date + days(5)) %>%
+  filter(`RTT Part Description`=="Incomplete DTA") %>%
+  filter(NHS == FALSE) %>%
+  filter(`Treatment Function Name` %in% high_rtti)
+ 
+plot <- RTT_index_all %>%
+  filter(`RTT Part Description`=="Incomplete DTA") %>%
+  filter(NHS == FALSE) %>%
+  filter(`Treatment Function Name` %in% high_rtti) %>%
+  ggplot(mapping = aes(
+    x = Date,
+    y = RTTI,
+    color = `Treatment Function Name`,
+    tooltip = `Treatment Function Name`,
+    data_id = `Treatment Function Name`
+  )) +
+  geom_line_interactive(hover_nearest = TRUE) +
+ # theme_ipsum()
+  labs(x="", 
+       y="RTTI",
+       subtitle="Hover over line to highlight") + #no axis labels
+  #theme_bw()+
+  theme(
+    panel.background = element_blank(), 
+    legend.key=element_blank() ) + #remove the grey background
+  theme(
+    panel.grid.major.x = element_blank() ,# remove the vertical grid lines
+    panel.grid.major.y = element_line( size=.09, color="gray" )) + # explicitly set the horizontal lines (or they will disappear too)
+  scale_x_date(breaks = break_vec, date_labels = "%b%y", expand = expansion(mult=c(0,0.15))) + #, date_breaks = "1 month") + #set tickmarks every month
+  theme(axis.text.x = element_text(face="bold", size=7, angle=90)) + #make tickmark labels smaller
+  #scale_y_continuous(breaks=seq(0, max(frimley_call_abandonment$value), 5)) +
+  theme(legend.position="none") +
+  #theme(legend.title=element_blank()) +
+  geom_vline(xintercept = as.Date("2024-08-01"), color = "darkgrey", size=0.5, linetype = "dashed") +
+  #annotate("text", x = max_date , y = , label = "Standard is 3% or less", size=3, colour="black") +
+    geom_text(
+      data = data_ends,
+      aes(label = `Treatment Function Name` ), 
+      color = "black", 
+      size = 2,
+      hjust=0
+    )+
+  ggtitle("Treatment Functions with high RTTI - Incomplete DTA - IH")
+
+
+
+interactive_plot <- girafe(ggobj = plot)
+
+interactive_plot <- girafe_options(
+  interactive_plot,
+  opts_hover(css = "stroke:#69B3A2; stroke-width: 3px; transition: all 0.3s ease;"),
+  opts_hover_inv("opacity:0.5;filter:saturate(10%);"),
+  opts_toolbar(saveaspng = FALSE)
+)
+htmltools::save_html(interactive_plot, "geom-line-interactive-3.html")
+```
+
+\
+
+
+
+
+```{r}
+htmltools::includeHTML("geom-line-interactive-3.html")
+```
+
+
+\
+
+\
+
+## High RTTI - Regional level - NHS Trusts
+
+\
+
+```{r}
+#library(hrbrthemes) # for the `theme_ipsum()`
+
+max_date <- max(RTT_index_region$Date)
+min_date <- min(RTT_index_region$Date)
+break_vec <- c(seq(from = min_date, to = max_date, by = "month"))
+
+data_ends <- RTT_index_region %>% 
+  filter(Date == max(Date)) %>%
+  mutate(Date = Date + days(5)) %>%
+  filter(`RTT Part Description`=="Incomplete DTA") %>%
+  #filter(NHS == TRUE) %>%
+  #filter(!stringr::str_detect(`Treatment Function Name`, "Other|Total")) %>%
+  filter(`Treatment Function Name` %in% high_rtti)
+#c("Ear Nose and Throat", "Oral Surgery", "Trauma and Orthopaedic", "Gynaecology", "General Surgery", "Neurosurgical", "Plastic Surgery", "Other - Paediatric", "Other - Surgical"))
+
+
+plot <- RTT_index_region %>%
+  filter(`RTT Part Description`=="Incomplete DTA") %>%
+  filter(`Treatment Function Name` %in% high_rtti) %>%
+  ggplot(mapping = aes(
+    x = Date,
+    y = RTTI,
+    color = `Treatment Function Name`,
+    tooltip = `Treatment Function Name`,
+    data_id = `Treatment Function Name`
+  )) +
+  geom_line_interactive(hover_nearest = TRUE) +
+ # theme_ipsum()
+  labs(x="", 
+       y="RTTI",
+       subtitle="Hover over line to highlight") + #no axis labels
+  #theme_bw()+
+  theme(
+    panel.background = element_blank(), 
+    legend.key=element_blank() ) + #remove the grey background
+  theme(
+    panel.grid.major.x = element_blank() ,# remove the vertical grid lines
+    panel.grid.major.y = element_line( size=.09, color="gray" )) + # explicitly set the horizontal lines (or they will disappear too)
+  scale_x_date(breaks = break_vec, date_labels = "%b%y", expand = expansion(mult=c(0,0.15))) + #, date_breaks = "1 month") + #set tickmarks every month
+  theme(axis.text.x = element_text(face="bold", size=7, angle=90)) + #make tickmark labels smaller
+  theme(legend.position="none") +
+  geom_vline(xintercept = as.Date("2024-08-01"), color = "darkgrey", size=0.5, linetype = "dashed") +
+  geom_text(
+    data = data_ends,
+    aes(label = `Treatment Function Name` ), 
+    color = "black", 
+    size = 2,
+    hjust=0
+    )+
+  ggtitle("Treatment Functions with high RTTI - NHS - Incomplete DTA")+
+  facet_wrap(~ Region, ncol=2)
+
+
+
+interactive_plot <- girafe(ggobj = plot)
+
+interactive_plot <- girafe_options(
+  interactive_plot,
+  opts_hover(css = "stroke:#69B3A2; stroke-width: 3px; transition: all 0.3s ease;"),
+  opts_hover_inv("opacity:0.5;filter:saturate(10%);"),
+  opts_toolbar(saveaspng = FALSE)
+)
+htmltools::save_html(interactive_plot, "geom-line-interactive-3.html")
+```
+
+```{r}
+htmltools::includeHTML("geom-line-interactive-3.html")
+```
+
+
+\
+
+\
+
+
+```{r eval=FALSE}
+#library(hrbrthemes) # for the `theme_ipsum()`
+
+max_date <- max(RTT_index_all$Date)
+min_date <- min(RTT_index_all$Date)
+break_vec <- c(seq(from = min_date, to = max_date, by = "month"))
+
+data_ends <- RTT_index_all %>% 
+  filter(Date == max(Date)) %>%
+  mutate(Date = Date + days(5)) %>%
+  filter(`RTT Part Description`=="Completed DTA") %>%
+  filter(NHS == TRUE) %>%
+  #filter(!stringr::str_detect(`Treatment Function Name`, "Other|Total")) %>%
+  filter(`Treatment Function Name` %in% high_rtti)
+  #c("Ear Nose and Throat", "Oral Surgery", "Trauma and Orthopaedic", "Gynaecology", "General Surgery", "Neurosurgical", "Plastic Surgery", "Other - Paediatric", "Other - Surgical"))
+
+
+plot <- RTT_index_all %>%
+  filter(`RTT Part Description`=="Completed DTA") %>%
+  filter(NHS == TRUE) %>%
+  #filter(!stringr::str_detect(`Treatment Function Name`, "Other|Total")) %>% 
+  filter(`Treatment Function Name` %in% high_rtti) %>%
+  #c("Ear Nose and Throat", "Oral Surgery", "Trauma and Orthopaedic", "Gynaecology", "General Surgery", "Neurosurgical", "Plastic Surgery", "Other - Paediatric", "Other - Surgical")) %>%
+  ggplot(mapping = aes(
+    x = Date,
+    y = RTTI,
+    color = `Treatment Function Name`,
+    tooltip = `Treatment Function Name`,
+    data_id = `Treatment Function Name`
+  )) +
+  geom_line_interactive(hover_nearest = TRUE) +
+ # theme_ipsum()
+  labs(x="", 
+       y="RTTI",
+       subtitle="Hover over line to highlight") + #no axis labels
+  #theme_bw()+
+  theme(
+    panel.background = element_blank(), 
+    legend.key=element_blank() ) + #remove the grey background
+  theme(
+    panel.grid.major.x = element_blank() ,# remove the vertical grid lines
+    panel.grid.major.y = element_line( size=.09, color="gray" )) + # explicitly set the horizontal lines (or they will disappear too)
+  scale_x_date(breaks = break_vec, date_labels = "%b%y", expand = expansion(mult=c(0,0.15))) + #, date_breaks = "1 month") + #set tickmarks every month
+  theme(axis.text.x = element_text(face="bold", size=7, angle=90)) + #make tickmark labels smaller
+  #scale_y_continuous(breaks=seq(0, max(frimley_call_abandonment$value), 5)) +
+  theme(legend.position="none") +
+  #theme(legend.title=element_blank()) +
+  geom_vline(xintercept = as.Date("2024-08-01"), color = "darkgrey", size=0.5, linetype = "dashed") +
+  #annotate("text", x = max_date , y = , label = "Standard is 3% or less", size=3, colour="black") +
+    geom_text(
+      data = data_ends,
+      aes(label = `Treatment Function Name` ), 
+      color = "black", 
+      size = 2,
+      hjust=0
+    )+
+  ggtitle("Treatment Functions with high RTTI - Complete DTA")
+
+
+
+interactive_plot <- girafe(ggobj = plot)
+
+interactive_plot <- girafe_options(
+  interactive_plot,
+  opts_hover(css = "stroke:#69B3A2; stroke-width: 3px; transition: all 0.3s ease;"),
+  opts_hover_inv("opacity:0.5;filter:saturate(10%);"),
+  opts_toolbar(saveaspng = FALSE)
+)
+htmltools::save_html(interactive_plot, "geom-line-interactive-3.html")
+```
+
+```{r eval=FALSE}
+htmltools::includeHTML("geom-line-interactive-3.html")
+```
+
+\
+
+
+## Medium RTTI - National level
+
+RTTI trend for these treatment functions is also decreasing, except for "Other - Medical", "Cardiothoracic Surgery", and "Cardiology", although RTTI has not deteriorated since January 2023.
+
+All these treatment functions has RTTI between 1.5 and 3 in January  2023. In March 2025, RTTI is below 2 for all treatment functions in this group, except for "Urology". It must be mentioned that "Urology" had a steady and marked decrease in RTTI since January 2023.
+
+\
+
+```{r}
+#library(hrbrthemes) # for the `theme_ipsum()`
+
+max_date <- max(RTT_index_all$Date)
+min_date <- min(RTT_index_all$Date)
+break_vec <- c(seq(from = min_date, to = max_date, by = "month"))
+#RTT_index_all$tooltip_text <- c(paste0(RTT_index_all$`Treatment Function Name`, "\n RTTI=", RTT_index_all$RTTI , "\n ", RTT_index_all$Date))
+
+data_ends <- RTT_index_all %>% 
+  filter(Date == max(Date)) %>%
+  mutate(Date = Date + days(5)) %>%
+  filter(`RTT Part Description`=="Incomplete DTA") %>%
+  filter(NHS == TRUE) %>%
+  filter(`Treatment Function Name` %in% medium_rtti)
+  
+plot <- RTT_index_all %>%
+  filter(`RTT Part Description`=="Incomplete DTA") %>%
+  filter(NHS == TRUE) %>%
+  filter(`Treatment Function Name` %in% medium_rtti) %>%
+  ggplot(mapping = aes(
+    x = Date,
+    y = RTTI,
+    color = `Treatment Function Name`,
+    tooltip = `Treatment Function Name`,
+    data_id = `Treatment Function Name`
+  )) +
+  geom_line_interactive(hover_nearest = TRUE) +
+ # theme_ipsum()
+  labs(x="", 
+       y="RTTI",
+       subtitle="Hover over line to highlight") + #no axis labels
+  #theme_bw()+
+  theme(
+    panel.background = element_blank(), 
+    legend.key=element_blank() ) + #remove the grey background
+  theme(
+    panel.grid.major.x = element_blank() ,# remove the vertical grid lines
+    panel.grid.major.y = element_line( size=.09, color="gray" )) + # explicitly set the horizontal lines (or they will disappear too)
+  scale_x_date(breaks = break_vec, date_labels = "%b%y", expand = expansion(mult=c(0,0.15))) + #, date_breaks = "1 month") + #set tickmarks every month
+  theme(axis.text.x = element_text(face="bold", size=7, angle=90)) + #make tickmark labels smaller
+  #scale_y_continuous(breaks=seq(0, max(frimley_call_abandonment$value), 5)) +
+  theme(legend.position="none") +
+  #theme(legend.title=element_blank()) +
+  geom_vline(xintercept = as.Date("2024-08-01"), color = "darkgrey", size=0.5, linetype = "dashed") +
+  #annotate("text", x = max_date , y = , label = "Standard is 3% or less", size=3, colour="black") +
+    geom_text(
+      data = data_ends,
+      aes(label = `Treatment Function Name` ), 
+      color = "black", 
+      size = 2,
+      hjust=0
+    )+
+  ggtitle("Treatment Functions with medium RTTI - Incomplete DTA - NHS")
+
+
+
+interactive_plot <- girafe(ggobj = plot)
+
+interactive_plot <- girafe_options(
+  interactive_plot,
+  opts_hover(css = "stroke:#69B3A2; stroke-width: 3px; transition: all 0.3s ease;"),
+  opts_hover_inv("opacity:0.5;filter:saturate(10%);"),
+  opts_toolbar(saveaspng = FALSE)
+)
+htmltools::save_html(interactive_plot, "geom-line-interactive-3.html")
+```
+
+```{r}
+htmltools::includeHTML("geom-line-interactive-3.html")
+```
+
+\
+
+\
+
+```{r}
+#library(hrbrthemes) # for the `theme_ipsum()`
+
+max_date <- max(RTT_index_all$Date)
+min_date <- min(RTT_index_all$Date)
+break_vec <- c(seq(from = min_date, to = max_date, by = "month"))
+
+data_ends <- RTT_index_all %>% 
+  filter(Date == max(Date)) %>%
+  mutate(Date = Date + days(5)) %>%
+  filter(`RTT Part Description`=="Incomplete DTA") %>%
+  filter(NHS == FALSE) %>%
+  filter(`Treatment Function Name` %in% medium_rtti)
+ 
+plot <- RTT_index_all %>%
+  filter(`RTT Part Description`=="Incomplete DTA") %>%
+  filter(NHS == FALSE) %>%
+  filter(`Treatment Function Name` %in% medium_rtti) %>%
+  ggplot(mapping = aes(
+    x = Date,
+    y = RTTI,
+    color = `Treatment Function Name`,
+    tooltip = `Treatment Function Name`,
+    data_id = `Treatment Function Name`
+  )) +
+  geom_line_interactive(hover_nearest = TRUE) +
+ # theme_ipsum()
+  labs(x="", 
+       y="RTTI",
+       subtitle="Hover over line to highlight") + #no axis labels
+  #theme_bw()+
+  theme(
+    panel.background = element_blank(), 
+    legend.key=element_blank() ) + #remove the grey background
+  theme(
+    panel.grid.major.x = element_blank() ,# remove the vertical grid lines
+    panel.grid.major.y = element_line( size=.09, color="gray" )) + # explicitly set the horizontal lines (or they will disappear too)
+  scale_x_date(breaks = break_vec, date_labels = "%b%y", expand = expansion(mult=c(0,0.15))) + #, date_breaks = "1 month") + #set tickmarks every month
+  theme(axis.text.x = element_text(face="bold", size=7, angle=90)) + #make tickmark labels smaller
+  #scale_y_continuous(breaks=seq(0, max(frimley_call_abandonment$value), 5)) +
+  theme(legend.position="none") +
+  #theme(legend.title=element_blank()) +
+  geom_vline(xintercept = as.Date("2024-08-01"), color = "darkgrey", size=0.5, linetype = "dashed") +
+  #annotate("text", x = max_date , y = , label = "Standard is 3% or less", size=3, colour="black") +
+    geom_text(
+      data = data_ends,
+      aes(label = `Treatment Function Name` ), 
+      color = "black", 
+      size = 2,
+      hjust=0
+    )+
+  ggtitle("Treatment Functions with medium RTTI - Incomplete DTA - IH")
+
+
+
+interactive_plot <- girafe(ggobj = plot)
+
+interactive_plot <- girafe_options(
+  interactive_plot,
+  opts_hover(css = "stroke:#69B3A2; stroke-width: 3px; transition: all 0.3s ease;"),
+  opts_hover_inv("opacity:0.5;filter:saturate(10%);"),
+  opts_toolbar(saveaspng = FALSE)
+)
+htmltools::save_html(interactive_plot, "geom-line-interactive-3.html")
+```
+
+```{r}
+htmltools::includeHTML("geom-line-interactive-3.html")
+```
+
+
+\
+
+\
+
+
+```{r eval=FALSE}
+#library(hrbrthemes) # for the `theme_ipsum()`
+
+max_date <- max(RTT_index_all$Date)
+min_date <- min(RTT_index_all$Date)
+break_vec <- c(seq(from = min_date, to = max_date, by = "month"))
+#RTT_index_all$tooltip_text <- c(paste0(RTT_index_all$`Treatment Function Name`, "\n RTTI=", RTT_index_all$RTTI , "\n ", RTT_index_all$Date))
+
+data_ends <- RTT_index_all %>% 
+  filter(Date == max(Date)) %>%
+  mutate(Date = Date + days(5)) %>%
+  filter(`RTT Part Description`=="Completed DTA") %>%
+  filter(NHS == TRUE) %>%
+  #filter(!stringr::str_detect(`Treatment Function Name`, "Other|Total")) %>%
+  filter(`Treatment Function Name` %in% medium_rtti)
+#c( "Urology",  "Ophthalmology", "Cardiology", "Dermatology", "Other - Other", "Cardiothoracic Surgery"))
+
+plot <- RTT_index_all %>%
+  filter(`RTT Part Description`=="Completed DTA") %>%
+  filter(NHS == TRUE) %>%
+  #filter(!stringr::str_detect(`Treatment Function Name`, "Other|Total")) %>% 
+  filter(`Treatment Function Name` %in% medium_rtti) %>%
+  #c("Urology", "Ophthalmology", "Cardiology", "Dermatology", "Other - Other", "Cardiothoracic Surgery")) %>%
+  ggplot(mapping = aes(
+    x = Date,
+    y = RTTI,
+    color = `Treatment Function Name`,
+    tooltip = `Treatment Function Name`,
+    data_id = `Treatment Function Name`
+  )) +
+  geom_line_interactive(hover_nearest = TRUE) +
+ # theme_ipsum()
+  labs(x="", 
+       y="RTTI",
+       subtitle="Hover over line to highlight") + #no axis labels
+  #theme_bw()+
+  theme(
+    panel.background = element_blank(), 
+    legend.key=element_blank() ) + #remove the grey background
+  theme(
+    panel.grid.major.x = element_blank() ,# remove the vertical grid lines
+    panel.grid.major.y = element_line( size=.09, color="gray" )) + # explicitly set the horizontal lines (or they will disappear too)
+  scale_x_date(breaks = break_vec, date_labels = "%b%y", expand = expansion(mult=c(0,0.15))) + #, date_breaks = "1 month") + #set tickmarks every month
+  theme(axis.text.x = element_text(face="bold", size=7, angle=90)) + #make tickmark labels smaller
+  #scale_y_continuous(breaks=seq(0, max(frimley_call_abandonment$value), 5)) +
+  theme(legend.position="none") +
+  #theme(legend.title=element_blank()) +
+  geom_vline(xintercept = as.Date("2024-08-01"), color = "darkgrey", size=0.5, linetype = "dashed") +
+  #annotate("text", x = max_date , y = , label = "Standard is 3% or less", size=3, colour="black") +
+    geom_text(
+      data = data_ends,
+      aes(label = `Treatment Function Name` ), 
+      color = "black", 
+      size = 2,
+      hjust=0
+    )+
+  ggtitle("Treatment Functions with medium RTTI - Completed DTA")
+
+
+
+interactive_plot <- girafe(ggobj = plot)
+
+interactive_plot <- girafe_options(
+  interactive_plot,
+  opts_hover(css = "stroke:#69B3A2; stroke-width: 3px; transition: all 0.3s ease;"),
+  opts_hover_inv("opacity:0.5;filter:saturate(10%);"),
+  opts_toolbar(saveaspng = FALSE)
+)
+htmltools::save_html(interactive_plot, "geom-line-interactive-3.html")
+```
+
+```{r eval=FALSE}
+htmltools::includeHTML("geom-line-interactive-3.html")
+```
+
+\
+
+## Medium RTTI - Regional level - NHS Trusts
+
+\
+
+```{r}
+#library(hrbrthemes) # for the `theme_ipsum()`
+
+max_date <- max(RTT_index_region$Date)
+min_date <- min(RTT_index_region$Date)
+break_vec <- c(seq(from = min_date, to = max_date, by = "month"))
+
+data_ends <- RTT_index_region %>% 
+  filter(Date == max(Date)) %>%
+  mutate(Date = Date + days(5)) %>%
+  filter(`RTT Part Description`=="Incomplete DTA") %>%
+  filter(`Treatment Function Name` %in% medium_rtti)
+
+plot <- RTT_index_region %>%
+  filter(`RTT Part Description`=="Incomplete DTA") %>%
+  filter(`Treatment Function Name` %in% medium_rtti) %>%
+  ggplot(mapping = aes(
+    x = Date,
+    y = RTTI,
+    color = `Treatment Function Name`,
+    tooltip = `Treatment Function Name`,
+    data_id = `Treatment Function Name`
+  )) +
+  geom_line_interactive(hover_nearest = TRUE) +
+ # theme_ipsum()
+  labs(x="", 
+       y="RTTI",
+       subtitle="Hover over line to highlight") + #no axis labels
+  #theme_bw()+
+  theme(
+    panel.background = element_blank(), 
+    legend.key=element_blank() ) + #remove the grey background
+  theme(
+    panel.grid.major.x = element_blank() ,# remove the vertical grid lines
+    panel.grid.major.y = element_line( size=.09, color="gray" )) + # explicitly set the horizontal lines (or they will disappear too)
+  scale_x_date(breaks = break_vec, date_labels = "%b%y", expand = expansion(mult=c(0,0.15))) + #, date_breaks = "1 month") + #set tickmarks every month
+  theme(axis.text.x = element_text(face="bold", size=7, angle=90)) + #make tickmark labels smaller
+  theme(legend.position="none") +
+  geom_vline(xintercept = as.Date("2024-08-01"), color = "darkgrey", size=0.5, linetype = "dashed") +
+  geom_text(
+    data = data_ends,
+    aes(label = `Treatment Function Name` ), 
+    color = "black", 
+    size = 2,
+    hjust=0
+    )+
+  ggtitle("Treatment Functions with medium RTTI - NHS - Incomplete DTA")+
+  facet_wrap(~ Region, ncol=2)
+
+
+
+interactive_plot <- girafe(ggobj = plot)
+
+interactive_plot <- girafe_options(
+  interactive_plot,
+  opts_hover(css = "stroke:#69B3A2; stroke-width: 3px; transition: all 0.3s ease;"),
+  opts_hover_inv("opacity:0.5;filter:saturate(10%);"),
+  opts_toolbar(saveaspng = FALSE)
+)
+htmltools::save_html(interactive_plot, "geom-line-interactive-3.html")
+```
+
+```{r}
+htmltools::includeHTML("geom-line-interactive-3.html")
+```
+
+
+\
+
+
+
+\
+
+## Low RTTI - National level
+
+\
+
+RTTI for "Respiratory Medicine" has higher levels of RTTI in 2025 that in early 2023.
+
+RTTI for "Mental Health" increased until April 2024 but has since shown lower levels.
+
+"Elderly Medicine" has lower levels of RTTI since November 2024.
+
+\
+
+```{r}
+#library(hrbrthemes) # for the `theme_ipsum()`
+
+max_date <- max(RTT_index_all$Date)
+min_date <- min(RTT_index_all$Date)
+break_vec <- c(seq(from = min_date, to = max_date, by = "month"))
+#RTT_index_all$tooltip_text <- c(paste0(RTT_index_all$`Treatment Function Name`, "\n RTTI=", RTT_index_all$RTTI , "\n ", RTT_index_all$Date))
+
+data_ends <- RTT_index_all %>% 
+  filter(Date == max(Date)) %>%
+  mutate(Date = Date + days(5)) %>%
+  filter(`RTT Part Description`=="Incomplete DTA") %>%
+  filter(NHS == TRUE) %>%
+  filter(`Treatment Function Name` %in% low_rtti)
+
+plot <- RTT_index_all %>%
+  filter(`RTT Part Description`=="Incomplete DTA") %>%
+  filter(NHS == TRUE) %>%
+  filter(`Treatment Function Name` %in% low_rtti) %>%
+  #c( "Gastroenterology", "Neurology", "Respiratory Medicine", "General Internal Medicine", "Rheumatology", "Elderly Medicine", "Other - Mental Health")) %>%
+  ggplot(mapping = aes(
+    x = Date,
+    y = RTTI,
+    color = `Treatment Function Name`,
+    tooltip = `Treatment Function Name`,
+    data_id = `Treatment Function Name`
+  )) +
+  geom_line_interactive(hover_nearest = TRUE) +
+ # theme_ipsum()
+  labs(x="", 
+       y="RTTI",
+       subtitle="Hover over line to highlight") + #no axis labels
+  #theme_bw()+
+  theme(
+    panel.background = element_blank(), 
+    legend.key=element_blank() ) + #remove the grey background
+  theme(
+    panel.grid.major.x = element_blank() ,# remove the vertical grid lines
+    panel.grid.major.y = element_line( size=.09, color="gray" )) + # explicitly set the horizontal lines (or they will disappear too)
+  scale_x_date(breaks = break_vec, date_labels = "%b%y", expand = expansion(mult=c(0,0.15))) + #, date_breaks = "1 month") + #set tickmarks every month
+  theme(axis.text.x = element_text(face="bold", size=7, angle=90)) + #make tickmark labels smaller
+  #scale_y_continuous(breaks=seq(0, max(frimley_call_abandonment$value), 5)) +
+  theme(legend.position="none") +
+  #theme(legend.title=element_blank()) +
+  geom_vline(xintercept = as.Date("2024-08-01"), color = "darkgrey", size=0.5, linetype = "dashed") +
+  #annotate("text", x = max_date , y = , label = "Standard is 3% or less", size=3, colour="black") +
+    geom_text(
+      data = data_ends,
+      aes(label = `Treatment Function Name` ), 
+      color = "black", 
+      size = 2,
+      hjust=0
+    )+
+  ggtitle("Treatment Functions with low RTTI - NHS - Incomplete DTA")
+
+
+
+interactive_plot <- girafe(ggobj = plot)
+
+interactive_plot <- girafe_options(
+  interactive_plot,
+  opts_hover(css = "stroke:#69B3A2; stroke-width: 3px; transition: all 0.3s ease;"),
+  opts_hover_inv("opacity:0.5;filter:saturate(10%);"),
+  opts_toolbar(saveaspng = FALSE)
+)
+htmltools::save_html(interactive_plot, "geom-line-interactive-3.html")
+```
+
+```{r}
+htmltools::includeHTML("geom-line-interactive-3.html")
+```
+
+\
+
+```{r}
+#library(hrbrthemes) # for the `theme_ipsum()`
+
+max_date <- max(RTT_index_all$Date)
+min_date <- min(RTT_index_all$Date)
+break_vec <- c(seq(from = min_date, to = max_date, by = "month"))
+
+data_ends <- RTT_index_all %>% 
+  filter(Date == max(Date)) %>%
+  mutate(Date = Date + days(5)) %>%
+  filter(`RTT Part Description`=="Incomplete DTA") %>%
+  filter(NHS == FALSE) %>%
+  filter(`Treatment Function Name` %in% low_rtti)
+ 
+plot <- RTT_index_all %>%
+  filter(`RTT Part Description`=="Incomplete DTA") %>%
+  filter(NHS == FALSE) %>%
+  filter(`Treatment Function Name` %in% low_rtti) %>%
+  ggplot(mapping = aes(
+    x = Date,
+    y = RTTI,
+    color = `Treatment Function Name`,
+    tooltip = `Treatment Function Name`,
+    data_id = `Treatment Function Name`
+  )) +
+  geom_line_interactive(hover_nearest = TRUE) +
+ # theme_ipsum()
+  labs(x="", 
+       y="RTTI",
+       subtitle="Hover over line to highlight") + #no axis labels
+  #theme_bw()+
+  theme(
+    panel.background = element_blank(), 
+    legend.key=element_blank() ) + #remove the grey background
+  theme(
+    panel.grid.major.x = element_blank() ,# remove the vertical grid lines
+    panel.grid.major.y = element_line( size=.09, color="gray" )) + # explicitly set the horizontal lines (or they will disappear too)
+  scale_x_date(breaks = break_vec, date_labels = "%b%y", expand = expansion(mult=c(0,0.15))) + #, date_breaks = "1 month") + #set tickmarks every month
+  theme(axis.text.x = element_text(face="bold", size=7, angle=90)) + #make tickmark labels smaller
+  #scale_y_continuous(breaks=seq(0, max(frimley_call_abandonment$value), 5)) +
+  theme(legend.position="none") +
+  #theme(legend.title=element_blank()) +
+  geom_vline(xintercept = as.Date("2024-08-01"), color = "darkgrey", size=0.5, linetype = "dashed") +
+  #annotate("text", x = max_date , y = , label = "Standard is 3% or less", size=3, colour="black") +
+    geom_text(
+      data = data_ends,
+      aes(label = `Treatment Function Name` ), 
+      color = "black", 
+      size = 2,
+      hjust=0
+    )+
+  ggtitle("Treatment Functions with low RTTI - Incomplete DTA - IH")
+
+
+
+interactive_plot <- girafe(ggobj = plot)
+
+interactive_plot <- girafe_options(
+  interactive_plot,
+  opts_hover(css = "stroke:#69B3A2; stroke-width: 3px; transition: all 0.3s ease;"),
+  opts_hover_inv("opacity:0.5;filter:saturate(10%);"),
+  opts_toolbar(saveaspng = FALSE)
+)
+htmltools::save_html(interactive_plot, "geom-line-interactive-3.html")
+```
+
+```{r}
+htmltools::includeHTML("geom-line-interactive-3.html")
+```
+
+
+
+## Low RTTI - Regional level - NHS Trusts
+
+\
+
+Note the widely different levels of RTTI in the 4 regions. 
+
+In the South RTTI has increased since November 2024.
+
+In the Midlands there are only 2 data points: in January 2023 and in August 2024. The Midlands doesn't seem to provide Mental Health services with DTA.
+
+\
+
+
+```{r}
+#library(hrbrthemes) # for the `theme_ipsum()`
+
+max_date <- max(RTT_index_region$Date)
+min_date <- min(RTT_index_region$Date)
+break_vec <- c(seq(from = min_date, to = max_date, by = "month"))
+
+data_ends <- RTT_index_region %>% 
+  filter(Date == max(Date)) %>%
+  mutate(Date = Date + days(5)) %>%
+  filter(`RTT Part Description`=="Incomplete DTA") %>%
+  filter(`Treatment Function Name` %in% low_rtti)
+
+plot <- RTT_index_region %>%
+  filter(`RTT Part Description`=="Incomplete DTA") %>%
+  filter(`Treatment Function Name` %in% low_rtti) %>%
+  ggplot(mapping = aes(
+    x = Date,
+    y = RTTI,
+    color = `Treatment Function Name`,
+    tooltip = `Treatment Function Name`,
+    data_id = `Treatment Function Name`
+  )) +
+  geom_line_interactive(hover_nearest = TRUE) +
+ # theme_ipsum()
+  labs(x="", 
+       y="RTTI",
+       subtitle="Hover over line to highlight") + #no axis labels
+  theme(
+    panel.background = element_blank(), 
+    legend.key=element_blank() ) + #remove the grey background
+  theme(
+    panel.grid.major.x = element_blank() ,# remove the vertical grid lines
+    panel.grid.major.y = element_line( size=.09, color="gray" )) + # explicitly set the horizontal lines (or they will disappear too)
+  scale_x_date(breaks = break_vec, date_labels = "%b%y", expand = expansion(mult=c(0,0.15))) + #, date_breaks = "1 month") + #set tickmarks every month
+  theme(axis.text.x = element_text(face="bold", size=7, angle=90)) + #make tickmark labels smaller
+  theme(legend.position="none") +
+  geom_vline(xintercept = as.Date("2024-08-01"), color = "darkgrey", size=0.5, linetype = "dashed") +
+  geom_text(
+    data = data_ends,
+    aes(label = `Treatment Function Name` ), 
+    color = "black", 
+    size = 2,
+    hjust=0
+    )+
+  ggtitle("Treatment Functions with low RTTI - NHS - Incomplete DTA")+
+  facet_wrap(~ Region, ncol=2)
+
+
+
+interactive_plot <- girafe(ggobj = plot)
+
+interactive_plot <- girafe_options(
+  interactive_plot,
+  opts_hover(css = "stroke:#69B3A2; stroke-width: 3px; transition: all 0.3s ease;"),
+  opts_hover_inv("opacity:0.5;filter:saturate(10%);"),
+  opts_toolbar(saveaspng = FALSE)
+)
+htmltools::save_html(interactive_plot, "geom-line-interactive-3.html")
+```
+
+```{r}
+htmltools::includeHTML("geom-line-interactive-3.html")
+```
+
+
+\
+
+```{r eval=FALSE}
+RTT_index_region %>%
+  filter(`RTT Part Description`=="Incomplete DTA") %>%
+  filter(`Treatment Function Name` == "Other - Mental Health", Region == "Midlands")
+```
+
+
+\
+
+
+
+```{r eval=FALSE}
+#library(hrbrthemes) # for the `theme_ipsum()`
+
+max_date <- max(RTT_index_all$Date)
+min_date <- min(RTT_index_all$Date)
+break_vec <- c(seq(from = min_date, to = max_date, by = "month"))
+#RTT_index_all$tooltip_text <- c(paste0(RTT_index_all$`Treatment Function Name`, "\n RTTI=", RTT_index_all$RTTI , "\n ", RTT_index_all$Date))
+
+data_ends <- RTT_index_all %>% 
+  filter(Date == max(Date)) %>%
+  mutate(Date = Date + days(5)) %>%
+  filter(`RTT Part Description`=="Completed DTA") %>%
+  filter(NHS == TRUE) %>%
+  #filter(!stringr::str_detect(`Treatment Function Name`, "Other|Total")) %>%
+  filter(`Treatment Function Name` %in% low_rtti)
+#c( "Gastroenterology", "Neurology", "Respiratory Medicine", "General Internal Medicine", "Rheumatology", "Elderly Medicine", "Other - Mental Health"))
+
+plot <- RTT_index_all %>%
+  filter(`RTT Part Description`=="Completed DTA") %>%
+  filter(NHS == TRUE) %>%
+  #filter(!stringr::str_detect(`Treatment Function Name`, "Other|Total")) %>% 
+  filter(`Treatment Function Name` %in% low_rtti) %>%
+  #c( "Gastroenterology", "Neurology", "Respiratory Medicine", "General Internal Medicine", "Rheumatology", "Elderly Medicine", "Other - Mental Health")) %>%
+  ggplot(mapping = aes(
+    x = Date,
+    y = RTTI,
+    color = `Treatment Function Name`,
+    tooltip = `Treatment Function Name`,
+    data_id = `Treatment Function Name`
+  )) +
+  geom_line_interactive(hover_nearest = TRUE) +
+ # theme_ipsum()
+  labs(x="", 
+       y="RTTI",
+       subtitle="Hover over line to highlight") + #no axis labels
+  #theme_bw()+
+  theme(
+    panel.background = element_blank(), 
+    legend.key=element_blank() ) + #remove the grey background
+  theme(
+    panel.grid.major.x = element_blank() ,# remove the vertical grid lines
+    panel.grid.major.y = element_line( size=.09, color="gray" )) + # explicitly set the horizontal lines (or they will disappear too)
+  scale_x_date(breaks = break_vec, date_labels = "%b%y", expand = expansion(mult=c(0,0.15))) + #, date_breaks = "1 month") + #set tickmarks every month
+  theme(axis.text.x = element_text(face="bold", size=7, angle=90)) + #make tickmark labels smaller
+  #scale_y_continuous(breaks=seq(0, max(frimley_call_abandonment$value), 5)) +
+  theme(legend.position="none") +
+  #theme(legend.title=element_blank()) +
+  geom_vline(xintercept = as.Date("2024-08-01"), color = "darkgrey", size=0.5, linetype = "dashed") +
+  #annotate("text", x = max_date , y = , label = "Standard is 3% or less", size=3, colour="black") +
+    geom_text(
+      data = data_ends,
+      aes(label = `Treatment Function Name` ), 
+      color = "black", 
+      size = 2,
+      hjust=0
+    )+
+  ggtitle("Treatment Functions with low RTTI")
+
+
+
+interactive_plot <- girafe(ggobj = plot)
+
+interactive_plot <- girafe_options(
+  interactive_plot,
+  opts_hover(css = "stroke:#69B3A2; stroke-width: 3px; transition: all 0.3s ease;"),
+  opts_hover_inv("opacity:0.5;filter:saturate(10%);"),
+  opts_toolbar(saveaspng = FALSE)
+)
+htmltools::save_html(interactive_plot, "geom-line-interactive-3.html")
+```
+
+```{r eval=FALSE}
+htmltools::includeHTML("geom-line-interactive-3.html")
+```
+
+\
+
+\
+
+
+\
+
+\
+
+
+
+
+
+
+<!-- ```{r} -->
+<!-- #grouped bar charts by region -->
+<!-- RTT_index_region %>% -->
+<!--   filter(str_detect(`Treatment Function Name`, "Other", negate=TRUE)) %>% -->
+<!--   ggplot(aes(x=RTTI, y=`Treatment Function Name`, fill=Region)) + -->
+<!--   geom_bar(position="dodge", stat="identity") -->
+
+<!-- ``` -->
+
+
+
+
+<!-- ```{r} -->
+<!-- RTT_index_region %>% -->
+<!--   filter(str_detect(`Treatment Function Name`, "Other")) %>% -->
+<!--   ggplot(aes(x=RTTI, y=`Treatment Function Name`, fill=Region)) + -->
+<!--   geom_bar(position="dodge", stat="identity") -->
+
+<!-- ``` -->
+
+
+
+<!-- ```{r} -->
+<!-- aux_all_inc <- RTT_index_all %>% -->
+<!--   filter(`RTT Part Description` == "Incomplete", NHS=="TRUE") %>% -->
+<!--   arrange(RTTI) -->
+
+<!-- aux_all_inc    -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- RTT_index_all %>% -->
+<!--   filter(`RTT Part Description` == "Incomplete") %>% -->
+<!--   mutate(`Treatment Function Name` = ordered(as.factor(`Treatment Function Name`), levels=aux_all_inc$`Treatment Function Name`)) %>% -->
+<!--   filter(`Treatment Function Name` != "Total") %>% -->
+<!--   filter(str_detect(`Treatment Function Name`, "Other", negate=TRUE)) %>% -->
+<!--   ggplot(aes(fill=NHS, x=RTTI, y=`Treatment Function Name`)) +  -->
+<!--     geom_bar(position="dodge", stat="identity") + -->
+<!--   ggtitle("RTTI - all providers - Incomplete") -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- RTT_index_all %>% -->
+<!--   filter(`RTT Part Description` == "Incomplete") %>% -->
+<!--   mutate(`Treatment Function Name` = ordered(as.factor(`Treatment Function Name`), levels=aux_all_inc$`Treatment Function Name`)) %>% -->
+<!--   filter(`Treatment Function Name` != "Total") %>% -->
+<!--   filter(str_detect(`Treatment Function Name`, "Other")) %>% -->
+<!--   ggplot(aes(fill=NHS, x=RTTI, y=`Treatment Function Name`)) +  -->
+<!--     geom_bar(position="dodge", stat="identity") + -->
+<!--   ggtitle("RTTI - all providers - Incomplete") -->
+<!-- ``` -->
+
+
+
+
+<!-- ```{r} -->
+<!-- aux_all_inc_dta <- RTT_index_all %>% -->
+<!--   filter(`RTT Part Description` == "Incomplete DTA", NHS=="TRUE") %>% -->
+<!--   arrange(RTTI) -->
+
+<!-- aux_all_inc_dta    -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- RTT_index_all %>% -->
+<!--   filter(`RTT Part Description` == "Incomplete DTA") %>% -->
+<!--   mutate(`Treatment Function Name` = ordered(as.factor(`Treatment Function Name`), levels=aux_all_inc_dta$`Treatment Function Name`)) %>% -->
+<!--   filter(`Treatment Function Name` != "Total") %>% -->
+<!--   ggplot(aes(fill=NHS, x=RTTI, y=`Treatment Function Name`)) +  -->
+<!--     geom_bar(position="dodge", stat="identity")+ -->
+<!--   ggtitle("RTTI - All providers Incomplete DTA") -->
+<!-- ``` -->
+
+
+
+
+
+
+<!-- ```{r} -->
+<!-- RTT_index %>% -->
+<!--   filter(`Treatment Function Name` == "Total") %>% -->
+<!--   mutate(NHS=str_replace(NHS, "TRUE", "NHS"))%>% -->
+<!--   mutate(NHS=str_replace(NHS, "FALSE", "IH"))%>% -->
+<!--   ggplot(aes(x=NHS, y=RTTI, color = NHS)) + -->
+<!--   geom_boxplot() + -->
+<!--   ggtitle("TOTAL") -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- RTT_index %>% -->
+<!--   filter(`Treatment Function Name` == "Total") %>% -->
+<!--   mutate(IH = str_replace(IH, "FALSE", "NHS")) %>% -->
+<!--   ggplot(aes(x=IH, y=RTTI, color = IH)) + -->
+<!--   geom_boxplot() + -->
+<!--   ggtitle("TOTAL") -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- RTT_index %>% -->
+<!--   filter(`Treatment Function Name` == "General Surgery") %>% -->
+<!--   ggplot(aes(x=NHS, y=RTTI, color = NHS)) + -->
+<!--   geom_boxplot()+ -->
+<!--   facet_grid(~`RTT Part Description`)+ -->
+<!--   ggtitle("General Surgery") -->
+<!-- ``` -->
+
+
+
+<!-- ```{r} -->
+<!-- RTT_index %>% -->
+<!--   filter(`Treatment Function Name` == "General Surgery", `RTT Part Description` == "Incomplete DTA") %>% -->
+<!--   ggplot(aes(x=IH, y=RTTI, color = IH)) + -->
+<!--   geom_boxplot() + -->
+<!--   ggtitle("General Surgery - Incomplete with DTA") -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- RTT_index %>% -->
+<!--   filter(`Treatment Function Name` == "Gynaecology") %>% -->
+<!--   ggplot(aes(x=NHS, y=RTTI, color = NHS)) + -->
+<!--   geom_boxplot()+ -->
+<!--   ggtitle("Gynaecology") -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- RTT_index %>% -->
+<!--   filter(`Treatment Function Name` == "Gynaecology", ) %>% -->
+<!--   ggplot(aes(x=NHS, y=RTTI, color = NHS)) + -->
+<!--   facet_grid(~`RTT Part Description`)+ -->
+<!--   geom_boxplot() + -->
+<!--   ggtitle("Gynaecology") -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- aux_nhs <- RTT_index %>% -->
+<!--   filter(`RTT Part Description` == "Incomplete") %>% -->
+<!--   group_by(`Treatment Function Name`, NHS) %>%  -->
+<!--   summarise(median_RTTI=median(RTTI, na.rm=TRUE)) %>%  -->
+<!--   ungroup() %>% -->
+<!--   #arrange(median_RTTI) %>% -->
+<!--   #select(`Treatment Function Name`, everything()) %>% -->
+<!--   pivot_wider(names_from = NHS, values_from = median_RTTI) %>% -->
+<!--   arrange(`TRUE`) -->
+<!--   #rename(`Median RTTI (NHS)`= NHS, `Median RTTI (IH)`= IH  ) -->
+<!-- aux_nhs -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- RTT_index %>% -->
+<!--   mutate(`Treatment Function Name` = ordered(`Treatment Function Name`, levels= aux_nhs$`Treatment Function Name`)) %>% -->
+<!--   mutate(NHS = forcats::fct_recode(as.factor(NHS), NHS = "TRUE", IH = "FALSE") ) %>% -->
+<!--   mutate(NHS = ordered(NHS, levels=c("NHS", "IH"))) %>% -->
+<!--   filter( `Treatment Function Name`!= "Total", `RTT Part Description` == "Incomplete") %>% -->
+<!--   ggplot(aes(y = `Treatment Function Name`, x = RTTI, color = `Treatment Function Name`)) + -->
+<!--   geom_boxplot() + -->
+<!--   theme(legend.position = "none")+ -->
+<!--   ggtitle("Incomplete pathways") + -->
+<!--   facet_grid(. ~ NHS) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- RTT_index %>% -->
+<!--   mutate(`Treatment Function Name` = ordered(`Treatment Function Name`, levels= aux_nhs$`Treatment Function Name`)) %>% -->
+<!--   mutate(NHS = forcats::fct_recode(as.factor(NHS), NHS = "TRUE", IH = "FALSE") ) %>% -->
+<!--   mutate(NHS = ordered(NHS, levels=c("NHS", "IH"))) %>% -->
+<!--   filter( `Treatment Function Name`!= "Total", `RTT Part Description` == "Incomplete DTA") %>% -->
+<!--   ggplot(aes(y = `Treatment Function Name`, x = RTTI, color = `Treatment Function Name`)) + -->
+<!--   geom_boxplot() + -->
+<!--   theme(legend.position = "none")+ -->
+<!--   ggtitle("Incomplete pathways DTA") + -->
+<!--   facet_grid(. ~ NHS) -->
+<!-- ``` -->
+
+
+
+
+
+<!-- ```{r} -->
+<!-- RTT_index %>% -->
+<!--   filter(`Treatment Function Name` == "General Internal Medicine", `RTT Part Description` == "Incomplete") %>% -->
+<!--   mutate(NHS = forcats::fct_recode(as.factor(NHS), NHS = "TRUE", IH = "FALSE") ) %>% -->
+<!--   mutate(NHS = ordered(NHS, levels=c("NHS", "IH"))) %>% -->
+<!--   ggplot(aes(x=NHS, y=RTTI, color = NHS)) + -->
+<!--   geom_boxplot()+ -->
+<!--   ggtitle("General Internal Medicine") -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+<!-- RTT_index %>% -->
+<!--   filter(`Treatment Function Name` == "Gastroenterology", `RTT Part Description` %in% c("Incomplete", "Incomplete DTA")) %>% -->
+<!--   mutate(NHS = forcats::fct_recode(as.factor(NHS), NHS = "TRUE", IH = "FALSE") ) %>% -->
+<!--   mutate(NHS = ordered(NHS, levels=c("NHS", "IH"))) %>% -->
+<!--   ggplot(aes(x=NHS, y=RTTI, color = NHS)) + -->
+<!--   geom_boxplot()+ -->
+<!--   ggtitle("Gastroenterology")+ -->
+<!--   facet_grid(~`RTT Part Description`) -->
+<!-- ``` -->
+
+
+
+
